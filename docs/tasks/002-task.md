@@ -3,7 +3,7 @@
 | 项 | 内容 |
 | --- | --- |
 | 计划编号 | 002 |
-| 状态 | 待评审 |
+| 状态 | 实施中（功能与 UI 待人工验收） |
 | 更新日期 | 2026-10-26 |
 | 关联需求 | FR-SHELL-01 主界面结构、FR-SHELL-02 窗口尺寸与位置记忆 |
 | 前置计划 | 001 项目搭建（已完成） |
@@ -34,9 +34,11 @@
 
 | 编号 | 决策 | 落点 |
 | --- | --- | --- |
-| C-01 | 主题**做持久化**：偏好写入用户数据目录，启动时读取 | 1.1 第 4 项、3.5、D8、S6 |
+| C-01 | 主题**做持久化**：偏好写入数据根目录，启动时读取 | 1.1 第 4 项、3.5、D8、S6 |
 | C-02 | 左侧导航选中态**常亮橙色**，不随窗口失焦变灰 | 3.3、D3、S5 |
 | C-03 | macOS 隐藏系统三色灯后，接受自绘 green 仅最大化 / 还原；全屏与失焦置灰列入 003 | R-03、9 |
+| C-04 | 数据存储根目录统一为 `{UserHomeDir}/.bowknot-agent/`，不使用 `mygo.PathUserData` | 3.5、D8、S0 |
+| C-05 | **不单独拆路径包**：002 由 `internal/platform` 统一提供 `DataDir()` / `SettingsPath()`；出现第二个消费者或路径布局复杂化时再评估 `internal/paths` | 2、3.5、D8、S6、R-09 |
 
 ## 2. 前置状态与 mygo API 核实
 
@@ -54,7 +56,7 @@
 | 自绘导航 | `ui.ButtonBase(c)` 无外观按钮，配合 `Background` / `TextColor` / `Selected` / `Hovered` / `Pressed` / `Label`；`FocusGroup(ui.Vertical)` 收敛 Tab 停靠点 | 四模块导航，选中态由我们固定为橙色，不受窗口焦点影响 |
 | 自绘按钮 | `ui.ButtonBase` + `Background` / `Radius` / `Size` / `Hovered` / `Label` | 三色交通灯与主题切换按钮 |
 | 图标与 logo | `ui.MustParseSVG` + `ui.Icon`；`ui.DecodeBitmap` + `ui.Image` | 导航图标、太阳/月亮图标、圆角方块 logo |
-| 用户数据目录 | `mygo.App.Path(mygo.PathUserData)`（macOS `~/Library/Application Support/Bowknot Agent`，Windows `%AppData%\Bowknot Agent`，首次使用创建） | 存放 `settings.json` |
+| 数据根目录 | **已确认** `{UserHomeDir}/.bowknot-agent/`（macOS `~/.bowknot-agent`、Windows `C:/Users/<用户>/.bowknot-agent`）；由 `internal/platform` 统一提供 `DataDir()`（内部 `os.UserHomeDir()` + `filepath.Join`，`os.MkdirAll(0o700)`） | 存放 `settings.json` 及后续全部本机数据 |
 | 视图测试 | `ui.NewTester(view, w, h)` 无窗口点击与文本断言 | 骨架、主题与持久化装配测试 |
 
 前置修正：`AGENTS.md` 第 4 节仍写 mygo `v0.5.5`，与 `go.mod` 的 `v0.6.4` 不一致，S0 一并校正，避免后续按错误版本排查。
@@ -80,7 +82,7 @@
 | 高度 | 44 DIP，底部 1px 分隔线（`theme.Border`），背景 `theme.Background` |
 | 左侧 | 20×20 圆角方块 logo（`theme.Accent` 底 + 白色 `B`）+ 间距 8 + 应用名（13–14，`Bold`） |
 | 右侧 | 主题切换按钮 28×28 + 间距 12 + 三色交通灯 |
-| 交通灯 | 直径 12，间距 8；关闭 `#ff5f57`、最小化 `#febc2e`、最大化 `#28c840`；悬停显示 `×` / `−` / `+` 符号 |
+| 交通灯 | 直径 12，间距 8，无悬停符号；从左到右：最小化 `#febc2e`、最大化 `#28c840`、关闭 `#ff5f57` |
 | 按钮行为 | 关闭 `Close`；最小化 `Minimize`；最大化 `IsMaximized() ? Unmaximize : Maximize` |
 | 拖拽 | 标题栏空白区 `.DragWindow()`；按钮区域不参与拖拽；双击空白区最大化 / 还原 |
 | 可访问性 | 图标按钮设置 `Label`（关闭 / 最小化 / 最大化 / 切换主题），供测试与辅助技术识别 |
@@ -91,7 +93,7 @@
 | --- | --- |
 | 结构 | 横向：左侧导航 220 DIP（`theme.Surface`，右侧 1px `theme.Border`）+ 右侧内容区（`Grow(1)`，`theme.Background`） |
 | 导航项 | `store` App Store、`agent` 助手 / Agent、`creation` 创作、`settings` 设置，每项一个 `ui.ButtonBase`，`Padding(8,10)`、`Gap(8)`、`Radius` |
-| 选中态 | 选中项**始终** `Background(theme.Accent)` + `TextColor(theme.AccentText)`，图标同步为 `AccentText`，不随窗口失焦变灰 |
+| 选中态 | 选中项背景 `theme.Accent` 的 30% 透明度（`ui.AccentTint()`），文字与图标为 `theme.Accent`；文字与图标靠左，不随窗口失焦变灰 |
 | 未选中态 | 悬停 `theme.SurfaceHover`，按下 `theme.SurfacePressed`，文字 `theme.Text`、图标 `theme.TextMuted` |
 | 图标 | 四个单色 SVG（Lucide 风格：商店、机器人、调色板、齿轮），`ui.MustParseSVG` 一次解析，图标随文字颜色 |
 | 默认选中 | `store` |
@@ -122,11 +124,13 @@
 
 应用方式：`internal/ui/theme.go` 提供 `Theme(mode)`，两套主题各构建一次；根视图每帧 `c.SetTheme(...)`；标题栏、侧栏、内容区一律取令牌，禁止硬编码颜色。默认 `Light`，切换入口为标题栏主题按钮（浅色显示月亮、暗色显示太阳）。
 
-### 3.5 主题持久化
+### 3.5 主题持久化与数据根目录
 
 | 项 | 规格 |
 | --- | --- |
-| 存放位置 | `mygo.App.Path(mygo.PathUserData)` 下的 `settings.json`；目录由 mygo 首次创建，不写入仓库 |
+| 数据根目录 | **已确认** `{UserHomeDir}/.bowknot-agent/`，不随 `mygo.PathUserData` 变化；后续模块的缓存、日志、数据库等本机数据统一放在此根目录下 |
+| 路径入口 | 不在 `internal/app` 或各模块内重复拼接路径；`internal/platform` 提供 `DataDir()` 与 `SettingsPath()`，`internal/app/settings.go` 只接收路径参数做 JSON 读写 |
+| 存放位置 | `<根目录>/settings.json`；根目录缺失时 `os.MkdirAll(0o700)` 创建，文件权限 `0o600`；不写入仓库 |
 | 文件格式 | `{"theme":"light"}` 或 `{"theme":"dark"}`，UTF-8 JSON；字段缺失视为亮色 |
 | 读取时机 | 创建窗口之前读取一次；文件不存在、JSON 非法、值未知一律回退 `light`，记录一次日志，不阻断启动 |
 | 写入时机 | 主题按钮切换后立即写入；写入失败不回滚当前主题，仅记录日志，下次切换重试 |
@@ -161,21 +165,21 @@
 | D4 | `internal/app/app.go` | 80% 工作区、居中、最小尺寸、`StateKey`、隐藏系统标题栏与按钮、初始白底 | `windowSize` 纯函数单测；`go tool mygo dev` 手动验证 |
 | D5 | `internal/ui/icons/` | 四个导航 SVG + 太阳/月亮 SVG，`go:embed` 一次解析 | 编译通过，图标显示正常 |
 | D6 | 首页替换 | 删除 `internal/ui/home.go` 及其测试，由 shell 接管 | `go test ./...` 通过，无残留引用 |
-| D7 | `AGENTS.md` 校正 | mygo 版本改为 `v0.6.4`，命令与 `go.mod` 一致 | 版本号与 `go.mod` 一致 |
-| D8 | `internal/app/settings.go` | 主题偏好读取 / 原子写入、损坏回退亮色、缺失回退亮色 | 表驱动单测覆盖 3.5 的六种情况 |
+| D7 | `AGENTS.md` 校正 | mygo 版本改为 `v0.6.4`，命令与 `go.mod` 一致；补充数据根目录 `{UserHomeDir}/.bowknot-agent/` 约定 | 版本号与 `go.mod` 一致，数据目录约定与计划一致 |
+| D8 | `internal/app/settings.go` | 通过 `internal/platform` 的 `SettingsPath()` 读写 `{UserHomeDir}/.bowknot-agent/settings.json`，损坏与缺失回退亮色 | 表驱动单测覆盖 3.5 的六种情况；`platform` 的路径纯函数另测 |
 | D9 | 本计划 | 状态、决策与验收结果更新 | 文档状态准确 |
 
 ## 6. 实施步骤
 
 | 步骤 | 内容 | 完成标志 |
 | --- | --- | --- |
-| S0 | 校正 `AGENTS.md` 的 mygo 版本 | 与 `go.mod` 一致 |
+| S0 | 校正 `AGENTS.md` 的 mygo 版本，并补充数据根目录约定 | 与 `go.mod` 一致，根目录为 `{UserHomeDir}/.bowknot-agent/` |
 | S1 | 写 `theme.go`：两套令牌 + `Theme(mode)` + 单测 | 单测通过，色值与第 3.4 节一致 |
 | S2 | 标题栏 spike：`TitleBarHidden` + `HideWindowButtons` + `DragWindow` + 三个 `ButtonBase` 圆点 | `go tool mygo dev` 中可拖动、可最小化/最大化/关闭，点击不误触拖拽 |
 | S3 | 标题栏成型：logo、应用名、主题按钮、交通灯悬停符号、`Label` | 视觉与交互符合第 3.2 节 |
 | S4 | 窗口参数：`windowSize` 纯函数 + 居中 + 最小尺寸 + `StateKey` + 初始白底 | 单测通过；首启 80%，重启恢复上次尺寸 |
 | S5 | 骨架：`internal/shell` 自定义导航 + 内容占位 + 默认选中 | 四模块可切换、窗口不重建、选中项常亮橙色 |
-| S6 | 持久化：`internal/app/settings.go` + 启动读取 + 切换写入 + 单测 | 重启保持主题；损坏文件回退亮色；单测通过 |
+| S6 | 持久化：`internal/platform` 路径函数（`DataDir` / `SettingsPath`）+ `internal/app/settings.go` + 启动读取 + 切换写入 + 单测 | 读写 `{UserHomeDir}/.bowknot-agent/settings.json`；重启保持主题；损坏文件回退亮色；单测通过 |
 | S7 | 清理：删除 `home.go` 与旧测试，接入 shell | `go test ./...` 通过 |
 | S8 | 自检与文档：`gofmt -l .`、`go vet ./...`、`go test ./...`、`go tool mygo build`；更新计划状态 | 全部通过，产物在 `build/windows-amd64/` |
 
@@ -185,7 +189,7 @@
 - 标题栏无系统标题栏与系统按钮；左侧 logo + `Bowknot Agent`，右侧主题按钮 + 三色灯位置与规格一致。
 - 拖动标题栏空白可移动窗口，双击最大化 / 还原；三色灯分别关闭、最小化、最大化 / 还原；窗口四边可缩放。
 - 主题按钮在亮 / 暗间即时切换，主背景由白变深；所有可见颜色来自主题令牌，无硬编码色值。
-- 切换主题后重启仍保持上次主题；`settings.json` 缺失、损坏或值未知时回退亮色且不崩溃。
+- 切换主题后重启仍保持上次主题；设置写入 `{UserHomeDir}/.bowknot-agent/settings.json`；`settings.json` 缺失、损坏或值未知时回退亮色且不崩溃；仓库内无运行时配置。
 - 侧栏四个模块可点击切换，默认 App Store；右侧显示对应占位内容；选中项在窗口失焦时仍为橙色。
 - `gofmt -l .` 无输出，`go vet ./...`、`go test ./...` 通过，`go tool mygo build` 成功。
 
@@ -198,12 +202,28 @@
 | R-03 | macOS 隐藏系统交通灯后的语义差异 | 失去系统全屏按钮与失焦置灰 | **已确认接受**：002 自绘 green 仅最大化 / 还原；全屏与失焦置灰列入 003 |
 | R-04 | 暗色切换时窗口外围底色 | 拖动或缩放瞬间露出白底 | 切换时同步 `SetBackgroundColor`；S2/S6 验证 |
 | R-05 | `ui.Sidebar` 选中态由 mygo 决定，失焦变灰 | 无法满足常亮橙色 | **已确认改为自定义**：`ButtonBase` 列表；仅剩焦点环与选中态叠加的视觉细节，S5 验证 |
-| R-06 | 主题持久化失败 | 启动读失败可能阻断或回退不一致 | 读取失败一律回退 `light` 且不阻断；写入失败不阻塞 UI，保留当前主题 |
+| R-06 | 主题持久化失败 | 启动读失败可能阻断或回退不一致；数据根目录可能无法创建 | 读取失败一律回退 `light` 且不阻断；根目录或文件写入失败不阻塞 UI，保留当前主题 |
 | R-07 | logo 尚无正式资源 | 先用圆角方块 + `B` 占位 | 正式 logo 资源到位后替换，不改变布局 |
 | R-08 | macOS 本机不可验证 | 标题栏、缩放、DPI 行为未知 | Windows 先验收，macOS 列入跨平台验证清单 |
+| R-09 | 路径职责放在 `internal/platform`，随模块增多可能膨胀 | `platform` 包变大、边界模糊 | 002 只有 settings 一个消费者；出现第二个消费者或路径布局复杂化时，再抽出 `internal/paths` 并更新 AGENTS.md 目录表 |
 
 ## 9. 后续计划候选
 
 - 003：顶部全局状态（网关、模型、用量）+ 跟随系统外观 + 失焦态与全屏语义。
 - 004：托盘、单实例、关闭到托盘、窗口状态恢复的完整行为（FR-SHELL-02/03）。
 - 005：App Store 列表与详情占位数据（FR-APP-01），开始填实第一个模块。
+
+## 10. 实施记录（2026-10-26）
+
+| 项 | 结果 |
+| --- | --- |
+| S0 | `AGENTS.md` 版本改为 `v0.6.4`，第 10 节补充 `{UserHomeDir}/.bowknot-agent/` 数据根目录约定 |
+| S1 | `internal/ui/theme.go` + `theme_test.go`：两套令牌、橙色强调、`Mode.Toggle`、`BackgroundHex` |
+| S2/S3 | `internal/ui/titlebar.go`：自绘标题栏、logo、应用名、主题按钮、三色灯（左起最小化 / 最大化 / 关闭，无悬停符号）、`DragWindow` 与按钮分层 |
+| S4 | `internal/app/app.go`：`windowSize` / `minWindowSize` 纯函数 + 单测、`StateKey: "main"`、隐藏系统标题栏与按钮、初始白底 |
+| S5 | `internal/shell/shell.go`：`ButtonBase` 四模块导航（常亮橙选中）、占位内容、默认 `store`、未知 ID 回退 `store`；视图测试覆盖默认模块、点击切换、主题按钮与三灯回调 |
+| S6 | `internal/platform/paths.go`（`DataDir` / `SettingsPath` / `EnsureDataDir`）+ `internal/app/settings.go`（原子写入、缺失 / 损坏 / 未知值回退亮色）+ 表驱动单测 |
+| S7 | 删除 `internal/ui/home.go` 与 `home_test.go` |
+| S8 | `gofmt -l .` 无输出；`go vet ./...`、`go test ./...` 通过；`go tool mygo build` 成功，产物在 `build/windows-amd64/` |
+| 手动抽查 | 首启窗口 1536×825 且居中；标题栏空白双击最大化、三色灯最大化 / 还原 / 最小化可用；主题按钮切换后写入 `~/.bowknot-agent/settings.json`，重启保持上次主题 |
+| 待人工验收 | 视觉效果（间距、色彩、图标细节）与拖拽手感由用户确认；记录中不含 macOS 验证（R-08 仍开放） |
