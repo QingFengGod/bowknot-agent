@@ -1,0 +1,20 @@
+# 构建产物
+/build/
+/.mygo/
+/dist/
+mygo_windows_*.syso
+
+# 可执行文件与安装包
+*.exe
+*.app
+*.dmg
+*.deb
+
+# 本机配置与 IDE
+.vscode/
+.idea/
+*.local.*
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
