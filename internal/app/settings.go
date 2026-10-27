@@ -15,33 +15,33 @@ type settings struct {
 	Theme string `json:"theme"`
 }
 
-// loadTheme reads the appearance saved at path. A missing, unreadable or
-// malformed file, and an unknown theme, fall back to light without stopping
-// the app.
-func loadTheme(path string) ui.Mode {
+// loadTheme reads the appearance preference saved at path. A missing,
+// unreadable or malformed file, and an unknown theme, fall back to following
+// the system without stopping the app.
+func loadTheme(path string) ui.Preference {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Printf("app: read settings %s: %v; using light theme", path, err)
-		return ui.ModeLight
+		log.Printf("app: read settings %s: %v; following the system theme", path, err)
+		return ui.PreferenceSystem
 	}
 	var s settings
 	if err := json.Unmarshal(data, &s); err != nil {
-		log.Printf("app: parse settings %s: %v; using light theme", path, err)
-		return ui.ModeLight
+		log.Printf("app: parse settings %s: %v; following the system theme", path, err)
+		return ui.PreferenceSystem
 	}
-	switch ui.Mode(s.Theme) {
-	case ui.ModeLight, ui.ModeDark:
-		return ui.Mode(s.Theme)
+	switch ui.Preference(s.Theme) {
+	case ui.PreferenceLight, ui.PreferenceDark, ui.PreferenceSystem:
+		return ui.Preference(s.Theme)
 	default:
-		log.Printf("app: unknown theme %q in %s; using light theme", s.Theme, path)
-		return ui.ModeLight
+		log.Printf("app: unknown theme %q in %s; following the system theme", s.Theme, path)
+		return ui.PreferenceSystem
 	}
 }
 
-// saveTheme writes mode to path. It writes a temporary file first and renames
-// it, so that a half-written settings.json never replaces a good one.
-func saveTheme(path string, mode ui.Mode) error {
-	data, err := json.Marshal(settings{Theme: string(mode)})
+// saveTheme writes preference to path. It writes a temporary file first and
+// renames it, so that a half-written settings.json never replaces a good one.
+func saveTheme(path string, preference ui.Preference) error {
+	data, err := json.Marshal(settings{Theme: string(preference)})
 	if err != nil {
 		return fmt.Errorf("app: encode settings: %w", err)
 	}

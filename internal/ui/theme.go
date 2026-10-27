@@ -1,8 +1,11 @@
 package ui
 
-import mygoui "github.com/egoist/mygo/ui"
+import (
+	mygo "github.com/egoist/mygo"
+	mygoui "github.com/egoist/mygo/ui"
+)
 
-// Mode is the appearance the app shows: light or dark.
+// Mode is the appearance the app draws: light or dark.
 type Mode string
 
 // Appearance modes.
@@ -11,12 +14,56 @@ const (
 	ModeDark  Mode = "dark"
 )
 
-// Toggle returns the other mode.
-func (m Mode) Toggle() Mode {
-	if m == ModeDark {
+// Preference is the appearance the user chose: light, dark, or follow the
+// system. The default is system.
+type Preference string
+
+// Appearance preferences.
+const (
+	PreferenceLight  Preference = "light"
+	PreferenceDark   Preference = "dark"
+	PreferenceSystem Preference = "system"
+)
+
+// Next returns the preference one step along light → dark → system. An
+// unknown preference is treated as system.
+func (p Preference) Next() Preference {
+	switch p {
+	case PreferenceLight:
+		return PreferenceDark
+	case PreferenceDark:
+		return PreferenceSystem
+	default:
+		return PreferenceLight
+	}
+}
+
+// Source returns the mygo appearance source of the preference.
+func (p Preference) Source() mygo.ThemeSource {
+	switch p {
+	case PreferenceLight:
+		return mygo.ThemeLight
+	case PreferenceDark:
+		return mygo.ThemeDark
+	default:
+		return mygo.ThemeSystem
+	}
+}
+
+// Resolve returns the appearance to draw for preference. While following the
+// system, systemDark is the desktop's appearance.
+func Resolve(p Preference, systemDark bool) Mode {
+	switch p {
+	case PreferenceLight:
+		return ModeLight
+	case PreferenceDark:
+		return ModeDark
+	default:
+		if systemDark {
+			return ModeDark
+		}
 		return ModeLight
 	}
-	return ModeDark
 }
 
 // Theme returns the tokens of the appearance of mode. Both themes are built
@@ -41,7 +88,25 @@ func BackgroundHex(mode Mode) string {
 // AccentTint returns the accent color at 30% opacity, for the background of
 // the selected navigation item.
 func AccentTint() mygoui.Color {
-	return mygoui.RGBA(249, 115, 22, 0.3)
+	return mygoui.RGBA(249, 115, 22, 0.2)
+}
+
+// SuccessColor returns the color of a healthy state, such as an online
+// gateway.
+func SuccessColor(mode Mode) mygoui.Color {
+	if mode == ModeDark {
+		return mygoui.Hex("#4ade80")
+	}
+	return mygoui.Hex("#16a34a")
+}
+
+// DangerColor returns the color of a failed state, such as an offline
+// gateway.
+func DangerColor(mode Mode) mygoui.Color {
+	if mode == ModeDark {
+		return mygoui.Hex("#f87171")
+	}
+	return mygoui.Hex("#dc2626")
 }
 
 var (

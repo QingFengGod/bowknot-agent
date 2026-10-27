@@ -18,6 +18,7 @@ var (
 	SettingsIcon = mustIcon("settings.svg")
 	SunIcon      = mustIcon("sun.svg")
 	MoonIcon     = mustIcon("moon.svg")
+	AutoIcon     = mustIcon("auto.svg")
 )
 
 func mustIcon(name string) *mygoui.SVG {

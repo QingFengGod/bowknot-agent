@@ -41,10 +41,37 @@ func EnsureDataDir() (string, error) {
 	return dir, nil
 }
 
+// AppsDir returns the directory of installed apps in DataDir. It does not
+// create the directory.
+func AppsDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return appsDir(dir), nil
+}
+
+// RegistryPath returns the path of the installed app registry in AppsDir.
+func RegistryPath() (string, error) {
+	dir, err := AppsDir()
+	if err != nil {
+		return "", err
+	}
+	return registryPath(dir), nil
+}
+
 func dataDir(home string) string {
 	return filepath.Join(home, DataDirName)
 }
 
 func settingsPath(dir string) string {
 	return filepath.Join(dir, "settings.json")
+}
+
+func appsDir(dir string) string {
+	return filepath.Join(dir, "apps")
+}
+
+func registryPath(dir string) string {
+	return filepath.Join(dir, "registry.json")
 }

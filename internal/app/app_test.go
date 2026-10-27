@@ -26,6 +26,28 @@ func TestWindowSize(t *testing.T) {
 	}
 }
 
+func TestShouldHideOnClose(t *testing.T) {
+	tests := []struct {
+		name     string
+		quitting bool
+		hasTray  bool
+		want     bool
+	}{
+		{"close with tray hides", false, true, true},
+		{"close without tray quits", false, false, false},
+		{"quit with tray closes", true, true, false},
+		{"quit without tray closes", true, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldHideOnClose(tt.quitting, tt.hasTray); got != tt.want {
+				t.Errorf("shouldHideOnClose(%v, %v) = %v, want %v",
+					tt.quitting, tt.hasTray, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMinWindowSize(t *testing.T) {
 	tests := []struct {
 		name          string

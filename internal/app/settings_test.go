@@ -13,14 +13,15 @@ func TestLoadTheme(t *testing.T) {
 		name    string
 		content string
 		missing bool
-		want    ui.Mode
+		want    ui.Preference
 	}{
-		{name: "missing file", missing: true, want: ui.ModeLight},
-		{name: "light", content: `{"theme":"light"}`, want: ui.ModeLight},
-		{name: "dark", content: `{"theme":"dark"}`, want: ui.ModeDark},
-		{name: "malformed", content: `{"theme":`, want: ui.ModeLight},
-		{name: "unknown value", content: `{"theme":"solarized"}`, want: ui.ModeLight},
-		{name: "missing field", content: `{}`, want: ui.ModeLight},
+		{name: "missing file", missing: true, want: ui.PreferenceSystem},
+		{name: "light", content: `{"theme":"light"}`, want: ui.PreferenceLight},
+		{name: "dark", content: `{"theme":"dark"}`, want: ui.PreferenceDark},
+		{name: "system", content: `{"theme":"system"}`, want: ui.PreferenceSystem},
+		{name: "malformed", content: `{"theme":`, want: ui.PreferenceSystem},
+		{name: "unknown value", content: `{"theme":"solarized"}`, want: ui.PreferenceSystem},
+		{name: "missing field", content: `{}`, want: ui.PreferenceSystem},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -42,19 +43,19 @@ func TestLoadThemeUnreadable(t *testing.T) {
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if got := loadTheme(path); got != ui.ModeLight {
-		t.Errorf("loadTheme() = %q, want light", got)
+	if got := loadTheme(path); got != ui.PreferenceSystem {
+		t.Errorf("loadTheme() = %q, want system", got)
 	}
 }
 
 func TestSaveAndLoadTheme(t *testing.T) {
-	for _, mode := range []ui.Mode{ui.ModeLight, ui.ModeDark} {
+	for _, preference := range []ui.Preference{ui.PreferenceLight, ui.PreferenceDark, ui.PreferenceSystem} {
 		path := filepath.Join(t.TempDir(), "nested", "settings.json")
-		if err := saveTheme(path, mode); err != nil {
-			t.Fatalf("saveTheme(%q): %v", mode, err)
+		if err := saveTheme(path, preference); err != nil {
+			t.Fatalf("saveTheme(%q): %v", preference, err)
 		}
-		if got := loadTheme(path); got != mode {
-			t.Errorf("loadTheme() = %q, want %q", got, mode)
+		if got := loadTheme(path); got != preference {
+			t.Errorf("loadTheme() = %q, want %q", got, preference)
 		}
 		if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 			t.Errorf("temporary file still present after saveTheme")
@@ -68,7 +69,7 @@ func TestSaveThemeFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(blocker, "settings.json")
-	if err := saveTheme(path, ui.ModeDark); err == nil {
+	if err := saveTheme(path, ui.PreferenceDark); err == nil {
 		t.Fatal("saveTheme() = nil, want an error")
 	}
 }

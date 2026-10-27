@@ -3,6 +3,7 @@ package ui
 import (
 	"testing"
 
+	mygo "github.com/egoist/mygo"
 	mygoui "github.com/egoist/mygo/ui"
 )
 
@@ -47,6 +48,27 @@ func TestThemeTokens(t *testing.T) {
 	}
 }
 
+func TestStatusColors(t *testing.T) {
+	tests := []struct {
+		name            string
+		mode            Mode
+		success, danger string
+	}{
+		{"light", ModeLight, "#16a34a", "#dc2626"},
+		{"dark", ModeDark, "#4ade80", "#f87171"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SuccessColor(tt.mode); got != mygoui.Hex(tt.success) {
+				t.Errorf("SuccessColor(%q) = %v, want %s", tt.mode, got, tt.success)
+			}
+			if got := DangerColor(tt.mode); got != mygoui.Hex(tt.danger) {
+				t.Errorf("DangerColor(%q) = %v, want %s", tt.mode, got, tt.danger)
+			}
+		})
+	}
+}
+
 func TestBackgroundHex(t *testing.T) {
 	if got := BackgroundHex(ModeLight); got != "#ffffff" {
 		t.Errorf("light background = %q, want #ffffff", got)
@@ -56,11 +78,60 @@ func TestBackgroundHex(t *testing.T) {
 	}
 }
 
-func TestModeToggle(t *testing.T) {
-	if got := ModeLight.Toggle(); got != ModeDark {
-		t.Errorf("ModeLight.Toggle() = %q, want dark", got)
+func TestPreferenceNext(t *testing.T) {
+	tests := []struct {
+		from Preference
+		want Preference
+	}{
+		{PreferenceLight, PreferenceDark},
+		{PreferenceDark, PreferenceSystem},
+		{PreferenceSystem, PreferenceLight},
+		{Preference("unknown"), PreferenceLight},
 	}
-	if got := ModeDark.Toggle(); got != ModeLight {
-		t.Errorf("ModeDark.Toggle() = %q, want light", got)
+	for _, tt := range tests {
+		if got := tt.from.Next(); got != tt.want {
+			t.Errorf("%q.Next() = %q, want %q", tt.from, got, tt.want)
+		}
+	}
+}
+
+func TestResolve(t *testing.T) {
+	tests := []struct {
+		name       string
+		preference Preference
+		systemDark bool
+		want       Mode
+	}{
+		{"light with light system", PreferenceLight, false, ModeLight},
+		{"light with dark system", PreferenceLight, true, ModeLight},
+		{"dark with light system", PreferenceDark, false, ModeDark},
+		{"dark with dark system", PreferenceDark, true, ModeDark},
+		{"system with light desktop", PreferenceSystem, false, ModeLight},
+		{"system with dark desktop", PreferenceSystem, true, ModeDark},
+		{"unknown follows the desktop", Preference("unknown"), true, ModeDark},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Resolve(tt.preference, tt.systemDark); got != tt.want {
+				t.Errorf("Resolve(%q, %v) = %q, want %q", tt.preference, tt.systemDark, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPreferenceSource(t *testing.T) {
+	tests := []struct {
+		preference Preference
+		want       mygo.ThemeSource
+	}{
+		{PreferenceLight, mygo.ThemeLight},
+		{PreferenceDark, mygo.ThemeDark},
+		{PreferenceSystem, mygo.ThemeSystem},
+		{Preference("unknown"), mygo.ThemeSystem},
+	}
+	for _, tt := range tests {
+		if got := tt.preference.Source(); got != tt.want {
+			t.Errorf("%q.Source() = %q, want %q", tt.preference, got, tt.want)
+		}
 	}
 }

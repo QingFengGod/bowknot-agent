@@ -19,8 +19,14 @@ const (
 	maximizeLight = "#28c840"
 )
 
-// TitleBarActions are what the title bar buttons do.
+// TitleBarActions are what the title bar shows and what its buttons do.
 type TitleBarActions struct {
+	// Preference is the appearance the user chose, which decides the theme
+	// button's icon.
+	Preference Preference
+	// Focused is whether the window is focused; the traffic lights are gray
+	// while it is not.
+	Focused       bool
 	OnToggleTheme func()
 	OnMinimize    func()
 	OnMaximize    func()
@@ -41,7 +47,7 @@ func TitleBar(c *mygoui.Context, a TitleBarActions) mygoui.Element {
 		mygoui.Text(c, "Bowknot Agent").FontSize(13).Bold().TextColor(t.Text).SingleLine()
 		mygoui.Spacer(c)
 		themeButton(c, t, a)
-		trafficLights(c, a)
+		trafficLights(c, t, a)
 	})
 	return bar
 }
@@ -55,11 +61,15 @@ func logo(c *mygoui.Context, t *mygoui.Theme) {
 }
 
 func themeButton(c *mygoui.Context, t *mygoui.Theme, a TitleBarActions) {
-	icon := MoonIcon
-	name := "切换到暗色主题"
-	if t.Dark {
-		icon = SunIcon
-		name = "切换到亮色主题"
+	var icon *mygoui.SVG
+	var name string
+	switch a.Preference {
+	case PreferenceLight:
+		icon, name = MoonIcon, "切换到暗色主题"
+	case PreferenceDark:
+		icon, name = SunIcon, "切换到跟随系统主题"
+	default:
+		icon, name = AutoIcon, "切换到亮色主题"
 	}
 	b := mygoui.ButtonBase(c).Label("切换主题").Tooltip(name).Shrink(0).
 		Size(themeButtonSize, themeButtonSize).Radius(t.Radius / 2).Center().
@@ -77,19 +87,23 @@ func themeButton(c *mygoui.Context, t *mygoui.Theme, a TitleBarActions) {
 	}
 }
 
-func trafficLights(c *mygoui.Context, a TitleBarActions) {
+func trafficLights(c *mygoui.Context, t *mygoui.Theme, a TitleBarActions) {
+	closeColor, minimizeColor, maximizeColor := mygoui.Hex(closeLight), mygoui.Hex(minimizeLight), mygoui.Hex(maximizeLight)
+	if !a.Focused {
+		closeColor, minimizeColor, maximizeColor = t.Border, t.Border, t.Border
+	}
 	row := mygoui.Row(c).Gap(lightGap).Shrink(0).Margin(0, 0, 0, 4)
 	row.Children(func() {
-		trafficLight(c, "最小化", minimizeLight, a.OnMinimize)
-		trafficLight(c, "最大化", maximizeLight, a.OnMaximize)
-		trafficLight(c, "关闭", closeLight, a.OnClose)
+		trafficLight(c, "最小化", minimizeColor, a.OnMinimize)
+		trafficLight(c, "最大化", maximizeColor, a.OnMaximize)
+		trafficLight(c, "关闭", closeColor, a.OnClose)
 	})
 }
 
 // trafficLight draws one light, plain and without a symbol.
-func trafficLight(c *mygoui.Context, label, color string, action func()) {
+func trafficLight(c *mygoui.Context, label string, color mygoui.Color, action func()) {
 	b := mygoui.ButtonBase(c).Label(label).Shrink(0).
-		Size(lightSize, lightSize).Radius(lightSize / 2).Background(mygoui.Hex(color)).Center()
+		Size(lightSize, lightSize).Radius(lightSize / 2).Background(color).Center()
 	if b.Clicked() && action != nil {
 		action()
 	}
