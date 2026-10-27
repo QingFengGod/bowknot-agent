@@ -70,6 +70,16 @@ func RegistryPath() (string, error) {
 	return registryPath(dir), nil
 }
 
+// GatewayDir returns the directory holding the AI gateway configuration,
+// credentials and usage log in DataDir. It does not create the directory.
+func GatewayDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return gatewayDir(dir), nil
+}
+
 func dataDir(home string) string {
 	return filepath.Join(home, DataDirName)
 }
@@ -88,4 +98,8 @@ func appDataDir(dir string) string {
 
 func registryPath(dir string) string {
 	return filepath.Join(dir, "registry.json")
+}
+
+func gatewayDir(dir string) string {
+	return filepath.Join(dir, "gateway")
 }

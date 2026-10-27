@@ -258,7 +258,7 @@ func (s *Shell) statusFooter(c *mygoui.Context, t *mygoui.Theme) {
 			mygoui.Text(c, "用量").FontSize(12).TextColor(t.TextMuted)
 		})
 		if disabled {
-			mygoui.Text(c, "用量将随网关接入开放").FontSize(10).TextColor(t.TextMuted).SingleLine()
+			mygoui.Text(c, "用量面板将在后续计划开放").FontSize(10).TextColor(t.TextMuted).SingleLine()
 		}
 	})
 }

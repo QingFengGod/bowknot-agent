@@ -8,7 +8,9 @@ import (
 	mygoui "github.com/egoist/mygo/ui"
 
 	"github.com/bowknot/bowknot-agent/internal/capability"
+	"github.com/bowknot/bowknot-agent/internal/gateway"
 	"github.com/bowknot/bowknot-agent/internal/platform"
+	settingspage "github.com/bowknot/bowknot-agent/internal/settings"
 	"github.com/bowknot/bowknot-agent/internal/shell"
 	"github.com/bowknot/bowknot-agent/internal/store"
 	"github.com/bowknot/bowknot-agent/internal/ui"
@@ -46,6 +48,8 @@ type App struct {
 	installer    *store.Installer
 	host         *store.WebAppHost
 	capabilities *capability.Service
+	gateway      *gateway.Service
+	settingsPage *settingspage.Page
 	// quitting is set before the windows close for a quit, so that the close
 	// handler lets the window go instead of hiding it to the tray.
 	quitting bool
@@ -68,13 +72,14 @@ func New() *App {
 		Maximize:    a.toggleMaximize,
 		Close:       func() { a.window.Close() },
 	})
-	// 004 装配应用模块：从本地注册表读取已安装应用，缺省为空启动器；
-	// 网关状态仍固定为未配置，接入网关后只替换数据源。
+	// 004 装配应用模块：从本地注册表读取已安装应用，缺省为空启动器。
 	a.setUpStore()
+	// 006 装配网关与设置模块：侧栏状态由网关快照注入。
+	a.setUpGateway()
 	a.shell.Pages = map[shell.ModuleID]shell.Page{
-		shell.ModuleStore: a.page,
+		shell.ModuleStore:    a.page,
+		shell.ModuleSettings: a.settingsPage,
 	}
-	a.shell.Status = shell.Status{Gateway: shell.GatewayNotConfigured}
 	return a
 }
 

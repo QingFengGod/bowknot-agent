@@ -212,7 +212,7 @@ func TestSidebarFooterShowsGatewayStatus(t *testing.T) {
 			t.Errorf("footer does not show %q", text)
 		}
 	}
-	if tester.HasText("用量将随网关接入开放") {
+	if tester.HasText("用量面板将在后续计划开放") {
 		t.Error("online footer shows the disabled usage hint")
 	}
 }
