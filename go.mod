@@ -1,4 +1,4 @@
-module github.com/bowknot/bowknot-agent
+module github.com/QingFengGod/bowknot-agent
 
 go 1.27.3
 

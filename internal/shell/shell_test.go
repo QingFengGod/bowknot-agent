@@ -6,7 +6,7 @@ import (
 
 	mygoui "github.com/egoist/mygo/ui"
 
-	"github.com/bowknot/bowknot-agent/internal/ui"
+	"github.com/QingFengGod/bowknot-agent/internal/ui"
 )
 
 func newTester(t *testing.T, s *Shell) *mygoui.Tester {

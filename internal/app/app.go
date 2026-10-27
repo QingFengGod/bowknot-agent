@@ -7,14 +7,14 @@ import (
 	"github.com/egoist/mygo"
 	mygoui "github.com/egoist/mygo/ui"
 
-	"github.com/bowknot/bowknot-agent/internal/capability"
-	"github.com/bowknot/bowknot-agent/internal/gateway"
-	"github.com/bowknot/bowknot-agent/internal/platform"
-	settingspage "github.com/bowknot/bowknot-agent/internal/settings"
-	"github.com/bowknot/bowknot-agent/internal/shell"
-	"github.com/bowknot/bowknot-agent/internal/store"
-	"github.com/bowknot/bowknot-agent/internal/ui"
-	"github.com/bowknot/bowknot-agent/resources"
+	"github.com/QingFengGod/bowknot-agent/internal/capability"
+	"github.com/QingFengGod/bowknot-agent/internal/gateway"
+	"github.com/QingFengGod/bowknot-agent/internal/platform"
+	settingspage "github.com/QingFengGod/bowknot-agent/internal/settings"
+	"github.com/QingFengGod/bowknot-agent/internal/shell"
+	"github.com/QingFengGod/bowknot-agent/internal/store"
+	"github.com/QingFengGod/bowknot-agent/internal/ui"
+	"github.com/QingFengGod/bowknot-agent/resources"
 )
 
 // Title is the main window title, also the app name the tray shows.

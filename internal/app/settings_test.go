@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bowknot/bowknot-agent/internal/ui"
+	"github.com/QingFengGod/bowknot-agent/internal/ui"
 )
 
 func TestLoadTheme(t *testing.T) {

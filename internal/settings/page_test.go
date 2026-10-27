@@ -7,7 +7,7 @@ import (
 
 	mygoui "github.com/egoist/mygo/ui"
 
-	"github.com/bowknot/bowknot-agent/internal/gateway"
+	"github.com/QingFengGod/bowknot-agent/internal/gateway"
 )
 
 type fakeGateway struct {

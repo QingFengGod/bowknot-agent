@@ -5,10 +5,10 @@ import (
 
 	"github.com/egoist/mygo"
 
-	"github.com/bowknot/bowknot-agent/internal/gateway"
-	"github.com/bowknot/bowknot-agent/internal/platform"
-	settingspage "github.com/bowknot/bowknot-agent/internal/settings"
-	"github.com/bowknot/bowknot-agent/internal/shell"
+	"github.com/QingFengGod/bowknot-agent/internal/gateway"
+	"github.com/QingFengGod/bowknot-agent/internal/platform"
+	settingspage "github.com/QingFengGod/bowknot-agent/internal/settings"
+	"github.com/QingFengGod/bowknot-agent/internal/shell"
 )
 
 // The app injects a *gateway.Service as the settings Gateway.

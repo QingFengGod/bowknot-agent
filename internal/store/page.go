@@ -10,7 +10,7 @@ import (
 	"github.com/egoist/mygo"
 	mygoui "github.com/egoist/mygo/ui"
 
-	"github.com/bowknot/bowknot-agent/internal/ui"
+	"github.com/QingFengGod/bowknot-agent/internal/ui"
 )
 
 // Tab is the page shown in the app module.

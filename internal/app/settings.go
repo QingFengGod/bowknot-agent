@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bowknot/bowknot-agent/internal/ui"
+	"github.com/QingFengGod/bowknot-agent/internal/ui"
 )
 
 // settings is the content of settings.json in the data directory.

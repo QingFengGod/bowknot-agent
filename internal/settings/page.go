@@ -10,8 +10,8 @@ import (
 	"github.com/egoist/mygo"
 	mygoui "github.com/egoist/mygo/ui"
 
-	"github.com/bowknot/bowknot-agent/internal/gateway"
-	"github.com/bowknot/bowknot-agent/internal/ui"
+	"github.com/QingFengGod/bowknot-agent/internal/gateway"
+	"github.com/QingFengGod/bowknot-agent/internal/ui"
 )
 
 // OriginSettings marks usage written by the settings page test call.

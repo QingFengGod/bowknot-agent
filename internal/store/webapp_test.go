@@ -5,7 +5,7 @@ import (
 
 	mygoui "github.com/egoist/mygo/ui"
 
-	"github.com/bowknot/bowknot-agent/internal/ui"
+	"github.com/QingFengGod/bowknot-agent/internal/ui"
 )
 
 func newWebAppTester(t *testing.T, v *webAppView) *mygoui.Tester {

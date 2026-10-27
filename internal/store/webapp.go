@@ -9,8 +9,8 @@ import (
 	"github.com/egoist/mygo"
 	mygoui "github.com/egoist/mygo/ui"
 
-	"github.com/bowknot/bowknot-agent/internal/platform"
-	"github.com/bowknot/bowknot-agent/internal/ui"
+	"github.com/QingFengGod/bowknot-agent/internal/platform"
+	"github.com/QingFengGod/bowknot-agent/internal/ui"
 )
 
 // CrashThreshold is how many times one app window may crash before it stops

@@ -6,7 +6,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/transfer"
 
-	"github.com/bowknot/bowknot-agent/internal/capability"
+	"github.com/QingFengGod/bowknot-agent/internal/capability"
 )
 
 // capabilityService wires the capability API to the host platform.

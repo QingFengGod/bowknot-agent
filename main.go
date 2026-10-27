@@ -6,7 +6,7 @@ package main
 import (
 	"log"
 
-	"github.com/bowknot/bowknot-agent/internal/app"
+	"github.com/QingFengGod/bowknot-agent/internal/app"
 )
 
 func main() {
