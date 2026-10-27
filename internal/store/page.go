@@ -1,9 +1,13 @@
 package store
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"time"
 	"unicode/utf8"
 
+	"github.com/egoist/mygo"
 	mygoui "github.com/egoist/mygo/ui"
 
 	"github.com/bowknot/bowknot-agent/internal/ui"
@@ -25,6 +29,15 @@ type Page struct {
 	Tab      Tab
 	Registry *Registry
 
+	// Installer installs, enables and removes local apps; Host opens their
+	// windows. The app injects both. Without them the launcher still shows
+	// the installed apps, but its actions do nothing.
+	Installer *Installer
+	Host      *WebAppHost
+	// Repaint repaints the main window after an action changed the registry
+	// or opened a window.
+	Repaint func()
+
 	// Launcher state.
 	InstalledSearch string
 	StatusFilter    Status
@@ -34,6 +47,11 @@ type Page struct {
 	Search   string
 	Category string
 	Selected string
+
+	// installing is set while an install runs; notice is the last result,
+	// shown above the grid.
+	installing bool
+	notice     string
 }
 
 // NewPage creates the app module page, defaulting to the installed launcher.
@@ -51,9 +69,18 @@ func NewPage(registry *Registry) *Page {
 	return p
 }
 
-// Installed returns the launcher's apps, filtered and sorted.
+// Installed returns the launcher's apps, filtered and sorted. Apps with an
+// open window show as running without writing that transient status to the
+// registry.
 func (p *Page) Installed() []AppInfo {
 	apps := FilterInstalled(p.Registry.Apps(), p.InstalledSearch, p.StatusFilter)
+	if p.Host != nil {
+		for i := range apps {
+			if apps[i].Status == StatusInstalled && p.Host.IsOpen(apps[i].ID) {
+				apps[i].Status = StatusRunning
+			}
+		}
+	}
 	return SortApps(apps, p.Sort)
 }
 
@@ -180,9 +207,9 @@ func (p *Page) launcherToolbar(c *mygoui.Context, t *mygoui.Theme, count int) {
 		top.Children(func() {
 			mygoui.TextInput(c, &p.InstalledSearch).Width(260).Label("搜索已安装应用").
 				Placeholder("搜索已安装应用")
+			p.installButton(c, t, "安装包…", false)
+			p.installButton(c, t, "从目录安装", true)
 			mygoui.Spacer(c)
-			mygoui.Text(c, "启动与安装将在后续计划接入").
-				FontSize(11).TextColor(t.TextMuted).SingleLine()
 			p.sortButton(c, t)
 		})
 		filters := mygoui.Row(c).FillWidth().Gap(8).AlignItems(mygoui.Center)
@@ -194,7 +221,70 @@ func (p *Page) launcherToolbar(c *mygoui.Context, t *mygoui.Theme, count int) {
 			mygoui.Text(c, fmt.Sprintf("共 %d 个应用", count)).
 				FontSize(12).TextColor(t.TextMuted).SingleLine()
 		})
+		if p.installing {
+			mygoui.Text(c, "正在安装…").FontSize(11).TextColor(t.TextMuted).SingleLine()
+		} else if p.notice != "" {
+			mygoui.Text(c, p.notice).FontSize(11).TextColor(t.TextMuted).SingleLine()
+		}
 	})
+}
+
+func (p *Page) installButton(c *mygoui.Context, t *mygoui.Theme, label string, directory bool) {
+	disabled := p.Installer == nil || p.installing
+	b := mygoui.ButtonBase(c).Label(label).Shrink(0).Disabled(disabled).
+		Padding(6, 10).Radius(t.Radius).AlignItems(mygoui.Center).Justify(mygoui.Start).
+		Background(t.Surface)
+	if !disabled {
+		if b.Pressed() {
+			b.Background(t.SurfacePressed)
+		} else if b.Hovered() {
+			b.Background(t.SurfaceHover)
+		}
+	}
+	b.Children(func() {
+		textColor := t.Text
+		if disabled {
+			textColor = t.TextMuted
+		}
+		mygoui.Text(c, label).FontSize(12).TextColor(textColor)
+	})
+	if b.Clicked() && !disabled {
+		p.installFromPicker(directory)
+	}
+}
+
+// installFromPicker asks for a .bkapp package or a local folder and starts
+// the install.
+func (p *Page) installFromPicker(directory bool) {
+	path, err := pickInstallSource(directory)
+	if err != nil {
+		p.notice = "打开选择器失败：" + err.Error()
+		return
+	}
+	if path == "" {
+		return
+	}
+	p.startInstall(InstallRequest{Path: path, Directory: directory})
+}
+
+func pickInstallSource(directory bool) (string, error) {
+	opts := mygo.OpenDialogOptions{
+		Title:       "选择要安装的应用目录",
+		ButtonLabel: "安装",
+		Directory:   directory,
+	}
+	if !directory {
+		opts.Title = "选择 .bkapp 安装包"
+		opts.Filters = []mygo.FileFilter{{Name: "Bowknot 应用", Extensions: []string{"bkapp"}}}
+	}
+	paths, err := mygo.Dialog.Open(opts)
+	if err != nil {
+		return "", err
+	}
+	if len(paths) == 0 {
+		return "", nil
+	}
+	return paths[0], nil
 }
 
 func (p *Page) sortButton(c *mygoui.Context, t *mygoui.Theme) {
@@ -257,19 +347,186 @@ func (p *Page) appCard(c *mygoui.Context, t *mygoui.Theme, app AppInfo) {
 		})
 		mygoui.Text(c, app.Summary).FontSize(12).TextColor(t.TextMuted).SingleLine()
 		mygoui.Spacer(c)
-		footer := mygoui.Row(c).FillWidth().Gap(8).AlignItems(mygoui.Center)
+		footer := mygoui.Row(c).FillWidth().Gap(6).AlignItems(mygoui.Center)
 		footer.Children(func() {
 			mygoui.Text(c, string(app.Status)).FontSize(11).
 				TextColor(statusColor(app.Status, t)).SingleLine()
 			mygoui.Spacer(c)
-			action := app.Status.PrimaryAction()
-			b := mygoui.ButtonBase(c).Label(action+app.Name).Shrink(0).Disabled(true).
-				Padding(5, 10).Radius(t.Radius).Background(t.SurfacePressed)
-			b.Children(func() {
-				mygoui.Text(c, action).FontSize(11).TextColor(t.TextMuted)
-			})
+			if app.Status.Removable() {
+				p.cardButton(c, t, "卸载", false, func() { p.uninstallApp(app) })
+			}
+			p.cardButton(c, t, p.primaryLabel(app), true, func() { p.primary(app) })
 		})
 	})
+}
+
+// primaryLabel is the card's main action for the app status.
+func (p *Page) primaryLabel(app AppInfo) string {
+	if app.Status == StatusCorrupt {
+		return "修复"
+	}
+	if app.Status == StatusDisabled {
+		return "启用"
+	}
+	return app.Status.PrimaryAction()
+}
+
+// primary runs the card's main action.
+func (p *Page) primary(app AppInfo) {
+	switch app.Status {
+	case StatusInstalling, StatusUpdating:
+		p.notice = string(app.Status) + "，请稍候"
+	case StatusCorrupt:
+		p.installFromPicker(app.Source == SourceDirectory)
+	case StatusDisabled:
+		p.enableApp(app)
+	default:
+		p.openApp(app)
+	}
+}
+
+func (p *Page) cardButton(c *mygoui.Context, t *mygoui.Theme, label string, primary bool, action func()) {
+	b := mygoui.ButtonBase(c).Label(label+"应用").Shrink(0).
+		Padding(5, 10).Radius(t.Radius)
+	if primary {
+		b.Background(t.Accent)
+	} else {
+		b.Background(t.SurfacePressed)
+	}
+	if b.Pressed() {
+		b.Background(t.SurfaceHover)
+	}
+	b.Children(func() {
+		color := t.Text
+		if primary {
+			color = t.AccentText
+		}
+		mygoui.Text(c, label).FontSize(11).TextColor(color)
+	})
+	if b.Clicked() {
+		action()
+	}
+}
+
+// openApp opens the app window, focusing it when it is already open.
+func (p *Page) openApp(app AppInfo) {
+	if p.Host == nil {
+		p.notice = "应用窗口不可用"
+		return
+	}
+	if err := p.Host.Open(app.ID); err != nil {
+		p.notice = "打开失败：" + err.Error()
+		var manifestErr *ManifestError
+		if errors.As(err, &manifestErr) && p.Installer != nil {
+			_ = p.Installer.SetStatus(app.ID, StatusCorrupt)
+		}
+		p.showMessage("无法打开应用", err.Error())
+	}
+	p.repaint()
+}
+
+// enableApp turns a disabled app back on.
+func (p *Page) enableApp(app AppInfo) {
+	if p.Installer == nil {
+		return
+	}
+	if err := p.Installer.SetStatus(app.ID, StatusInstalled); err != nil {
+		p.notice = "启用失败：" + err.Error()
+		p.showMessage("启用失败", err.Error())
+	}
+	p.repaint()
+}
+
+// startInstall runs the install on a worker and applies the outcome on the
+// main thread.
+func (p *Page) startInstall(req InstallRequest) {
+	if p.Installer == nil || p.installing {
+		return
+	}
+	p.installing = true
+	p.notice = ""
+	go func() {
+		app, err := p.runInstall(context.Background(), req)
+		mygo.RunOnMain(func() {
+			p.installing = false
+			if err != nil {
+				p.showMessage("安装失败", err.Error())
+			} else {
+				p.notice = "已安装 " + app.Name
+			}
+			p.repaint()
+		})
+	}()
+}
+
+// runInstall installs synchronously; it only touches the registry, so the
+// caller applies the notice on the main thread.
+func (p *Page) runInstall(ctx context.Context, req InstallRequest) (AppInfo, error) {
+	if p.Installer == nil {
+		return AppInfo{}, fmt.Errorf("store: installer is not configured")
+	}
+	return p.Installer.Install(ctx, req)
+}
+
+// uninstallApp confirms, closes the app window, asks about its data and
+// removes the app.
+func (p *Page) uninstallApp(app AppInfo) {
+	if p.Installer == nil {
+		return
+	}
+	confirm, err := mygo.Dialog.Message(mygo.MessageOptions{
+		Type:          mygo.MessageWarning,
+		Title:         "卸载应用",
+		Message:       "确定卸载 " + app.Name + "？",
+		Detail:        "应用文件会被删除。",
+		Buttons:       []string{"取消", "卸载"},
+		DefaultButton: 1,
+		CancelButton:  0,
+	})
+	if err != nil || confirm.Button != 1 {
+		return
+	}
+	if p.Host != nil && p.Host.IsOpen(app.ID) {
+		p.Host.Close(app.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = p.Host.WaitClosed(ctx, app.ID)
+		cancel()
+	}
+	choice, err := mygo.Dialog.Message(mygo.MessageOptions{
+		Type:          mygo.MessageQuestion,
+		Title:         "应用数据",
+		Message:       "要一并删除 " + app.Name + " 的私有数据吗？",
+		Detail:        "保留数据会在重装后继续可用。",
+		Buttons:       []string{"取消", "保留数据", "删除数据"},
+		DefaultButton: 1,
+		CancelButton:  0,
+	})
+	if err != nil || choice.Button == 0 {
+		return
+	}
+	if err := p.Installer.Uninstall(context.Background(), app.ID, choice.Button == 2); err != nil {
+		p.notice = "卸载失败：" + err.Error()
+		p.showMessage("卸载失败", err.Error())
+		p.repaint()
+		return
+	}
+	p.notice = "已卸载 " + app.Name
+	p.repaint()
+}
+
+func (p *Page) showMessage(title, message string) {
+	_, _ = mygo.Dialog.Message(mygo.MessageOptions{
+		Type:    mygo.MessageError,
+		Title:   title,
+		Message: message,
+		Buttons: []string{"知道了"},
+	})
+}
+
+func (p *Page) repaint() {
+	if p.Repaint != nil {
+		p.Repaint()
+	}
 }
 
 func (p *Page) emptyLauncher(c *mygoui.Context, t *mygoui.Theme) {
@@ -452,9 +709,17 @@ func (p *Page) detail(c *mygoui.Context, t *mygoui.Theme) {
 		status.Children(func() {
 			mygoui.Text(c, string(app.Status)).FontSize(12).TextColor(t.Text)
 			mygoui.Spacer(c)
-			mygoui.Text(c, "安装与启动将在后续计划接入").
+			mygoui.Text(c, "示例应用不含安装包，请使用本地安装").
 				FontSize(11).TextColor(t.TextMuted).SingleLine()
 		})
+		useLocal := mygoui.ButtonBase(c).Label("使用本地安装").Shrink(0).
+			Padding(6, 12).Radius(t.Radius).Background(t.SurfacePressed)
+		useLocal.Children(func() {
+			mygoui.Text(c, "使用本地安装").FontSize(12).TextColor(t.Text)
+		})
+		if useLocal.Clicked() {
+			p.Tab = TabInstalled
+		}
 	})
 }
 

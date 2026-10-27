@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>你好 WebApp</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; padding: 24px; font: 14px/1.6 system-ui, sans-serif; }
+    h1 { margin: 0 0 4px; font-size: 20px; }
+    p.hint { margin: 0 0 16px; opacity: .65; }
+    button { margin: 0 8px 8px 0; padding: 6px 12px; font: inherit; cursor: pointer; }
+    #log { margin-top: 12px; padding: 12px; border-radius: 8px; background: #0001;
+           white-space: pre-wrap; min-height: 80px; }
+  </style>
+</head>
+<body>
+  <h1>你好 WebApp</h1>
+  <p class="hint">这个示例验证 005 的能力桥：私有目录、剪贴板、通知、外链与文件授权。</p>
+  <button id="save">写入私有目录</button>
+  <button id="load">读取私有目录</button>
+  <button id="clip-read">读取剪贴板</button>
+  <button id="clip-write">写入剪贴板</button>
+  <button id="notify">发送通知</button>
+  <button id="external">打开外链</button>
+  <button id="pick">选择文件并读取</button>
+  <div id="log">就绪。window.bowknot 已注入。</div>
+  <script>
+    const log = (text) => { document.getElementById('log').textContent = text; };
+    const run = async (label, task) => {
+      try { log(label + '：' + JSON.stringify(await task())); }
+      catch (error) { log(label + ' 失败：' + error.code + ' ' + error.message); }
+    };
+
+    document.getElementById('save').onclick = () =>
+      run('写入', () => window.bowknot.appData.write('notes/hello.txt', '你好，私有目录'));
+    document.getElementById('load').onclick = () =>
+      run('读取', () => window.bowknot.appData.read('notes/hello.txt'));
+    document.getElementById('clip-read').onclick = () =>
+      run('剪贴板', () => window.bowknot.clipboard.readText());
+    document.getElementById('clip-write').onclick = () =>
+      run('写入剪贴板', () => window.bowknot.clipboard.writeText('来自 WebApp 的文本'));
+    document.getElementById('notify').onclick = () =>
+      run('通知', () => window.bowknot.notify({ title: '你好 WebApp', body: '通知能力可用' }));
+    document.getElementById('external').onclick = () =>
+      run('外链', () => window.bowknot.openExternal('https://example.com'));
+    document.getElementById('pick').onclick = () =>
+      run('选择文件', async () => {
+        const picked = await window.bowknot.files.pickFile();
+        if (!picked) return '已取消';
+        const text = await window.bowknot.files.readGranted(picked.token, '');
+        return { name: picked.name, text };
+      });
+  </script>
+</body>
+</html>

@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo"
 	mygoui "github.com/egoist/mygo/ui"
 
+	"github.com/bowknot/bowknot-agent/internal/capability"
 	"github.com/bowknot/bowknot-agent/internal/platform"
 	"github.com/bowknot/bowknot-agent/internal/shell"
 	"github.com/bowknot/bowknot-agent/internal/store"
@@ -16,6 +17,10 @@ import (
 
 // Title is the main window title, also the app name the tray shows.
 const Title = "Bowknot Agent"
+
+// ShellVersion is the running shell version, compared with the
+// min_shell_version of an app package.
+const ShellVersion = "0.1.0"
 
 // 主窗口的最小尺寸，以及工作区不可用时的默认尺寸。
 const (
@@ -31,6 +36,16 @@ type App struct {
 	preference   ui.Preference
 	theme        ui.Mode
 	settingsPath string
+	// appsDir holds installed app programs, appDataDir their private data and
+	// registryPath the installed app list.
+	appsDir      string
+	appDataDir   string
+	registryPath string
+	registry     *store.Registry
+	page         *store.Page
+	installer    *store.Installer
+	host         *store.WebAppHost
+	capabilities *capability.Service
 	// quitting is set before the windows close for a quit, so that the close
 	// handler lets the window go instead of hiding it to the tray.
 	quitting bool
@@ -55,19 +70,91 @@ func New() *App {
 	})
 	// 004 装配应用模块：从本地注册表读取已安装应用，缺省为空启动器；
 	// 网关状态仍固定为未配置，接入网关后只替换数据源。
-	registry := store.NewRegistry()
-	if path, err := platform.RegistryPath(); err != nil {
-		log.Printf("app: apps registry path: %v", err)
-	} else if loaded, err := store.LoadRegistry(path); err != nil {
-		log.Printf("app: load apps registry: %v", err)
-	} else {
-		registry = loaded
-	}
+	a.setUpStore()
 	a.shell.Pages = map[shell.ModuleID]shell.Page{
-		shell.ModuleStore: store.NewPage(registry),
+		shell.ModuleStore: a.page,
 	}
 	a.shell.Status = shell.Status{Gateway: shell.GatewayNotConfigured}
 	return a
+}
+
+// setUpStore wires the installed app registry, the installer and the app
+// window host. Missing data paths leave the launcher usable but idle: nothing
+// is installed and installing is disabled.
+func (a *App) setUpStore() {
+	registry := store.NewRegistry()
+	appsDir, err := platform.AppsDir()
+	if err != nil {
+		log.Printf("app: apps directory: %v; installing is disabled", err)
+	}
+	appDataDir, err := platform.AppDataDir()
+	if err != nil {
+		log.Printf("app: app data directory: %v", err)
+	}
+	registryPath, err := platform.RegistryPath()
+	if err != nil {
+		log.Printf("app: apps registry path: %v", err)
+	}
+	a.appsDir, a.appDataDir, a.registryPath = appsDir, appDataDir, registryPath
+
+	if registryPath != "" {
+		loaded, loadErr := store.LoadRegistry(registryPath)
+		if loadErr != nil {
+			log.Printf("app: load apps registry: %v", loadErr)
+		} else {
+			registry = loaded
+		}
+		// A crash leaves transient statuses behind, and a deleted or damaged
+		// program directory must show as corrupt rather than as openable.
+		changed := registry.Normalize()
+		if appsDir != "" && registry.VerifyPrograms(appsDir, ShellVersion) {
+			changed = true
+		}
+		if changed {
+			if saveErr := store.SaveRegistry(registryPath, registry); saveErr != nil {
+				log.Printf("app: save normalized apps registry: %v", saveErr)
+			}
+		}
+	}
+	a.registry = registry
+
+	if appsDir != "" && registryPath != "" {
+		a.installer = &store.Installer{
+			AppsDir:      appsDir,
+			AppDataDir:   appDataDir,
+			RegistryPath: registryPath,
+			Registry:     registry,
+			ShellVersion: ShellVersion,
+		}
+	}
+	if appsDir != "" {
+		a.host = store.NewWebAppHost(appsDir, ShellVersion, capability.PreloadScript, ui.ModeLight)
+		a.host.Repaint = a.invalidateMain
+		a.host.OnOpened = func(id string) {
+			if a.installer == nil {
+				return
+			}
+			if _, err := a.installer.MarkOpened(id); err != nil {
+				log.Printf("app: record app launch: %v", err)
+			}
+		}
+		a.host.OnClosed = func(id string) {
+			a.forgetAppGrants(id)
+			a.invalidateMain()
+		}
+	}
+
+	a.page = store.NewPage(registry)
+	a.page.Installer = a.installer
+	a.page.Host = a.host
+	a.page.Repaint = a.invalidateMain
+}
+
+// invalidateMain repaints the main window when it exists.
+func (a *App) invalidateMain() {
+	if a.window != nil {
+		a.window.Invalidate()
+	}
 }
 
 // Run 取得单实例锁、装配主窗口与托盘并启动事件循环，直到应用退出。
@@ -83,15 +170,38 @@ func (a *App) Run() error {
 	})
 	// Quitting also closes the windows, so the close handler must know that
 	// this close is the real exit rather than a request to hide.
-	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.quitting = true })
+	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
+		a.quitting = true
+		if a.host != nil {
+			a.host.CloseAll()
+		}
+	})
 	mygo.Theme.SetSource(a.preference.Source())
 	mygo.Theme.OnUpdated(a.systemThemeChanged)
 	mygo.App.WhenReady(func() {
+		// The bkapp scheme must be registered before an app window is created;
+		// the capability service must be bound before a page calls it.
+		a.registerAppProtocol()
+		a.bindCapabilities()
+		if a.installer != nil {
+			a.installer.CleanStaging()
+		}
 		a.applyTheme()
 		a.createWindow()
 		a.createTray()
 	})
 	return mygo.App.Run()
+}
+
+// registerAppProtocol serves installed app files under bkapp://localhost/. A
+// failed registration leaves the launcher usable and reports the reason.
+func (a *App) registerAppProtocol() {
+	if a.appsDir == "" {
+		return
+	}
+	if err := mygo.Protocol.Handle(store.ProtocolScheme, store.NewProtocolHandler(a.appsDir)); err != nil {
+		log.Printf("app: register %s protocol: %v", store.ProtocolScheme, err)
+	}
 }
 
 // createWindow creates the main window and wires its close and focus events.
@@ -197,6 +307,9 @@ func (a *App) applyTheme() {
 	a.theme = ui.Resolve(a.preference, mygo.Theme.IsDark())
 	a.shell.Preference = a.preference
 	a.shell.Theme = a.theme
+	if a.host != nil {
+		a.host.SetTheme(a.theme)
+	}
 	if a.window != nil {
 		_ = a.window.SetBackgroundColor(ui.BackgroundHex(a.theme))
 		a.window.Invalidate()

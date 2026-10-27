@@ -33,6 +33,52 @@ type TitleBarActions struct {
 	OnClose       func()
 }
 
+// WindowTitleBarActions are what a WebApp window's title bar shows and what
+// its buttons do.
+type WindowTitleBarActions struct {
+	// Title is the app name shown at the left.
+	Title string
+	// Focused is whether the window is focused; the buttons are gray while
+	// it is not.
+	Focused    bool
+	OnMinimize func()
+	OnMaximize func()
+	OnClose    func()
+}
+
+// WindowTitleBar draws the title bar of a WebApp window: the app's initial
+// in a badge and its name on the left, the window buttons on the right. The
+// blank space drags the window, and a double click maximizes or restores it.
+func WindowTitleBar(c *mygoui.Context, a WindowTitleBarActions) mygoui.Element {
+	t := c.Theme()
+	bar := mygoui.Row(c).FillWidth().Height(TitleBarHeight).Shrink(0).
+		AlignItems(mygoui.Center).Padding(0, 16).Gap(8).
+		Background(t.Background).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
+		DragWindow()
+	bar.Children(func() {
+		nameBadge(c, t, a.Title)
+		mygoui.Text(c, a.Title).FontSize(13).Bold().TextColor(t.Text).SingleLine()
+		mygoui.Spacer(c)
+		trafficLights(c, t, a.Focused, a.OnMinimize, a.OnMaximize, a.OnClose)
+	})
+	return bar
+}
+
+func nameBadge(c *mygoui.Context, t *mygoui.Theme, name string) {
+	mark := mygoui.Box(c).Size(logoSize, logoSize).Radius(4).Shrink(0).
+		Background(t.Accent).Center()
+	mark.Children(func() {
+		mygoui.Text(c, firstRune(name)).FontSize(11).Bold().TextColor(t.AccentText)
+	})
+}
+
+func firstRune(s string) string {
+	for _, r := range s {
+		return string(r)
+	}
+	return "?"
+}
+
 // TitleBar draws the app's title bar: the logo and the app name on the
 // left, the theme button and the traffic lights on the right. The blank
 // space drags the window, and a double click maximizes or restores it.
@@ -47,7 +93,7 @@ func TitleBar(c *mygoui.Context, a TitleBarActions) mygoui.Element {
 		mygoui.Text(c, "Bowknot Agent").FontSize(13).Bold().TextColor(t.Text).SingleLine()
 		mygoui.Spacer(c)
 		themeButton(c, t, a)
-		trafficLights(c, t, a)
+		trafficLights(c, t, a.Focused, a.OnMinimize, a.OnMaximize, a.OnClose)
 	})
 	return bar
 }
@@ -87,16 +133,16 @@ func themeButton(c *mygoui.Context, t *mygoui.Theme, a TitleBarActions) {
 	}
 }
 
-func trafficLights(c *mygoui.Context, t *mygoui.Theme, a TitleBarActions) {
+func trafficLights(c *mygoui.Context, t *mygoui.Theme, focused bool, onMinimize, onMaximize, onClose func()) {
 	closeColor, minimizeColor, maximizeColor := mygoui.Hex(closeLight), mygoui.Hex(minimizeLight), mygoui.Hex(maximizeLight)
-	if !a.Focused {
+	if !focused {
 		closeColor, minimizeColor, maximizeColor = t.Border, t.Border, t.Border
 	}
 	row := mygoui.Row(c).Gap(lightGap).Shrink(0).Margin(0, 0, 0, 4)
 	row.Children(func() {
-		trafficLight(c, "最小化", minimizeColor, a.OnMinimize)
-		trafficLight(c, "最大化", maximizeColor, a.OnMaximize)
-		trafficLight(c, "关闭", closeColor, a.OnClose)
+		trafficLight(c, "最小化", minimizeColor, onMinimize)
+		trafficLight(c, "最大化", maximizeColor, onMaximize)
+		trafficLight(c, "关闭", closeColor, onClose)
 	})
 }
 

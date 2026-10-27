@@ -246,3 +246,58 @@ func TestTabSwitchingKeepsBothSearches(t *testing.T) {
 		t.Error("launcher search was lost after switching tab")
 	}
 }
+
+func TestLauncherCardActions(t *testing.T) {
+	p := NewPage(sampleRegistry())
+	tester := newTester(t, p)
+	docs, _ := p.Registry.Get("docs")
+	p.primary(docs)
+	// Without a window host the action explains itself instead of opening.
+	if p.notice != "应用窗口不可用" {
+		t.Errorf("notice = %q, want 应用窗口不可用", p.notice)
+	}
+	for _, want := range []string{"卸载应用", "启用应用", "更新应用", "打开应用"} {
+		if _, ok := tester.Find(want); !ok {
+			t.Errorf("card actions do not include %q", want)
+		}
+	}
+}
+
+func TestLauncherInstallButtonsDisabledWithoutInstaller(t *testing.T) {
+	p := NewPage(sampleRegistry())
+	tester := newTester(t, p)
+	for _, label := range []string{"安装包…", "从目录安装"} {
+		if !tester.HasText(label) {
+			t.Errorf("toolbar does not show %q", label)
+		}
+	}
+}
+
+func TestLauncherRunningApp(t *testing.T) {
+	p := NewPage(sampleRegistry())
+	p.Host = &WebAppHost{windows: map[string]*webAppWindow{"docs": {}}}
+	apps := p.Installed()
+	for _, app := range apps {
+		if app.ID == "docs" && app.Status != StatusRunning {
+			t.Errorf("docs status = %q, want running", app.Status)
+		}
+		if app.ID == "code" && app.Status != StatusUpdatable {
+			t.Errorf("code status = %q, want updatable", app.Status)
+		}
+	}
+}
+
+func TestDiscoverPointsToLocalInstall(t *testing.T) {
+	p := newDiscoverPage(t)
+	tester := newTester(t, p)
+	if !tester.HasText("示例应用不含安装包，请使用本地安装") {
+		t.Error("discover detail does not explain the local install")
+	}
+	if err := tester.Click("使用本地安装"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if p.Tab != TabInstalled {
+		t.Errorf("Tab = %v after using local install, want installed", p.Tab)
+	}
+}

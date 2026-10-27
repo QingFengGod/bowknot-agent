@@ -79,6 +79,17 @@ func (s Status) PrimaryAction() string {
 	}
 }
 
+// Removable reports whether the app can be uninstalled, including a damaged
+// one whose files are already gone but whose registry entry remains.
+func (s Status) Removable() bool {
+	switch s {
+	case StatusInstalled, StatusRunning, StatusUpdatable, StatusDisabled, StatusCorrupt:
+		return true
+	default:
+		return false
+	}
+}
+
 // StatusFilters are the filter options of the launcher, the first showing
 // every installed app.
 var StatusFilters = []Status{"", StatusInstalled, StatusUpdatable, StatusDisabled, StatusCorrupt}

@@ -51,6 +51,16 @@ func AppsDir() (string, error) {
 	return appsDir(dir), nil
 }
 
+// AppDataDir returns the directory of app private data in DataDir. It does not
+// create the directory; each app owns the appdata/<id> folder inside it.
+func AppDataDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return appDataDir(dir), nil
+}
+
 // RegistryPath returns the path of the installed app registry in AppsDir.
 func RegistryPath() (string, error) {
 	dir, err := AppsDir()
@@ -70,6 +80,10 @@ func settingsPath(dir string) string {
 
 func appsDir(dir string) string {
 	return filepath.Join(dir, "apps")
+}
+
+func appDataDir(dir string) string {
+	return filepath.Join(dir, "appdata")
 }
 
 func registryPath(dir string) string {

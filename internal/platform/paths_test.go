@@ -29,3 +29,10 @@ func TestAppsPaths(t *testing.T) {
 		t.Errorf("registryPath(%q) = %q, want %q", apps, got, want)
 	}
 }
+
+func TestAppDataDir(t *testing.T) {
+	dir := filepath.Join("home", "user", ".bowknot-agent")
+	if got, want := appDataDir(dir), filepath.Join(dir, "appdata"); got != want {
+		t.Errorf("appDataDir(%q) = %q, want %q", dir, got, want)
+	}
+}
