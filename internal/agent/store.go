@@ -33,6 +33,7 @@ type Summary struct {
 	UpdatedAt int64
 	Messages  int
 	Model     string
+	AgentID   string
 }
 
 // Store keeps the conversations of the assistant, one JSON file each. Every
@@ -118,15 +119,25 @@ func (s *Store) Load() error {
 
 // List returns the summaries ordered by recent update, newest first.
 func (s *Store) List() []Summary {
+	return s.ListByAgent("")
+}
+
+// ListByAgent returns the summaries of one agent ordered by recent update.
+// An empty agent ID lists the conversations of the main agent.
+func (s *Store) ListByAgent(agentID string) []Summary {
 	s.mu.Lock()
 	out := make([]Summary, 0, len(s.convs))
 	for _, c := range s.convs {
+		if c.AgentID != agentID {
+			continue
+		}
 		out = append(out, Summary{
 			ID:        c.ID,
 			Title:     c.TitleText(),
 			UpdatedAt: c.UpdatedAt,
 			Messages:  len(c.Messages),
 			Model:     c.Model,
+			AgentID:   c.AgentID,
 		})
 	}
 	s.mu.Unlock()
@@ -150,13 +161,19 @@ func (s *Store) Get(id string) (Conversation, bool) {
 	return c.Clone(), true
 }
 
-// Create adds an empty conversation and returns a copy.
+// Create adds an empty conversation of the main agent and returns a copy.
 func (s *Store) Create() Conversation {
+	return s.CreateFor("")
+}
+
+// CreateFor adds an empty conversation of one agent and returns a copy.
+func (s *Store) CreateFor(agentID string) Conversation {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for {
 		c := NewConversation(now)
+		c.AgentID = agentID
 		if _, exists := s.convs[c.ID]; !exists {
 			s.convs[c.ID] = c
 			return c.Clone()

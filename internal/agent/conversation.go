@@ -57,21 +57,27 @@ type Message struct {
 	UsageEstimated bool          `json:"usage_estimated"`
 	DurationMS     int64         `json:"duration_ms,omitempty"`
 	Status         MessageStatus `json:"status"`
-	ErrorCode      string        `json:"error_code,omitempty"`
-	ErrorMessage   string        `json:"error_message,omitempty"`
-	At             int64         `json:"at"`
+	// TaskGroupID marks an assistant message that renders as a task card
+	// instead of a bubble. It is empty for ordinary replies.
+	TaskGroupID  string `json:"task_group_id,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	At           int64  `json:"at"`
 }
 
 // Conversation is one local chat session, stored as one JSON file.
 type Conversation struct {
-	Schema      int       `json:"schema"`
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	TitleEdited bool      `json:"title_edited,omitempty"`
-	CreatedAt   int64     `json:"created_at"`
-	UpdatedAt   int64     `json:"updated_at"`
-	Model       string    `json:"model,omitempty"`
-	Messages    []Message `json:"messages"`
+	Schema      int    `json:"schema"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	TitleEdited bool   `json:"title_edited,omitempty"`
+	CreatedAt   int64  `json:"created_at"`
+	UpdatedAt   int64  `json:"updated_at"`
+	Model       string `json:"model,omitempty"`
+	// AgentID is the agent the conversation belongs to; empty is the main
+	// agent, and a sub agent ID keeps its own list.
+	AgentID  string    `json:"agent_id,omitempty"`
+	Messages []Message `json:"messages"`
 }
 
 // NewConversation returns an empty conversation created at now.
@@ -129,6 +135,9 @@ func (c *Conversation) Validate() error {
 	}
 	if c.CreatedAt <= 0 || c.UpdatedAt <= 0 {
 		return errors.New("时间戳非法")
+	}
+	if c.AgentID != "" && !ValidSubAgentID(c.AgentID) {
+		return errors.New("子 Agent ID 非法")
 	}
 	if len(c.Messages) > MaxMessages {
 		return fmt.Errorf("消息 %d 条，超过上限 %d", len(c.Messages), MaxMessages)

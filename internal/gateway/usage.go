@@ -25,6 +25,7 @@ type UsageRecord struct {
 	Time           int64      `json:"time"`
 	Origin         string     `json:"origin"`
 	ConversationID string     `json:"conversation_id,omitempty"`
+	TaskID         string     `json:"task_id,omitempty"`
 	ProviderID     string     `json:"provider_id"`
 	ProviderName   string     `json:"provider_name"`
 	Model          string     `json:"model"`

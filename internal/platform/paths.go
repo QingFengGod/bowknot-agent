@@ -90,6 +90,16 @@ func AgentDir() (string, error) {
 	return agentDir(dir), nil
 }
 
+// TaskDir returns the directory holding dispatched task groups in DataDir.
+// It does not create the directory.
+func TaskDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return taskDir(dir), nil
+}
+
 func dataDir(home string) string {
 	return filepath.Join(home, DataDirName)
 }
@@ -116,4 +126,8 @@ func gatewayDir(dir string) string {
 
 func agentDir(dir string) string {
 	return filepath.Join(dir, "agent")
+}
+
+func taskDir(dir string) string {
+	return filepath.Join(dir, "tasks")
 }

@@ -183,7 +183,11 @@ func (a *App) Run() error {
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
 		a.quitting = true
 		// 007: cancel a running reply and persist what streamed before exit.
+		// 008: cancel a running task group or plan.
 		if a.agentPage != nil {
+			if a.agentPage.Dispatcher != nil {
+				a.agentPage.Dispatcher.Shutdown()
+			}
 			a.agentPage.Runner.Shutdown()
 		}
 		if a.host != nil {

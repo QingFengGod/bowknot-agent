@@ -340,7 +340,7 @@ func TestBuildMessagesSkipsEmptyReplies(t *testing.T) {
 		{Role: RoleUser, Content: "追问", Status: StatusOK, At: 3},
 		{Role: RoleAssistant, Content: "回答", Status: StatusOK, At: 4},
 	}}
-	messages := buildMessages(conv)
+	messages := buildMessages(conv, SystemPrompt)
 	if len(messages) != 4 {
 		t.Fatalf("messages = %d, want system + 3", len(messages))
 	}

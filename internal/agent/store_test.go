@@ -18,6 +18,57 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+func TestStoreAgentConversationsStaySeparate(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	main := s.Create()
+	sub := s.CreateFor("a-12345678")
+	if _, err := s.Append(main.ID, Message{Role: RoleUser, Content: "主导", Status: StatusOK,
+		At: 20}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(sub.ID, Message{Role: RoleUser, Content: "子", Status: StatusOK,
+		At: 10}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{main.ID, sub.ID} {
+		if err := s.Save(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if list := s.List(); len(list) != 1 || list[0].AgentID != "" {
+		t.Errorf("main list = %+v", list)
+	}
+	subList := s.ListByAgent("a-12345678")
+	if len(subList) != 1 || subList[0].ID != sub.ID || subList[0].AgentID != "a-12345678" {
+		t.Errorf("sub list = %+v", subList)
+	}
+
+	reloaded := NewStore(dir)
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	again, ok := reloaded.Get(sub.ID)
+	if !ok || again.AgentID != "a-12345678" {
+		t.Errorf("reloaded sub conversation = %+v", again)
+	}
+	if list := reloaded.ListByAgent("a-12345678"); len(list) != 1 {
+		t.Errorf("reloaded sub list = %+v", list)
+	}
+}
+
+func TestConversationRejectsBadAgentID(t *testing.T) {
+	conv := NewConversation(time.Unix(100, 0))
+	conv.AgentID = "main"
+	if err := conv.Validate(); err == nil {
+		t.Error("a non sub agent ID is accepted")
+	}
+}
+
 func TestStoreRenameKeepsTitleAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)

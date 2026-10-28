@@ -39,10 +39,11 @@ func TestUsageAppendRecentCount(t *testing.T) {
 func TestUsageRecordsConversationID(t *testing.T) {
 	log := NewUsageLog(t.TempDir())
 	if err := log.Append(UsageRecord{Time: 1, Origin: "agent", ConversationID: "c-1a2b3c4d",
-		Capability: CapabilityChat, Status: UsageOK}); err != nil {
+		TaskID: "t-1a2b3c4d", Capability: CapabilityChat, Status: UsageOK}); err != nil {
 		t.Fatal(err)
 	}
-	// A record written before 007 has no conversation_id and must still read.
+	// A record written before 007 has no conversation_id and no task_id, and
+	// must still read.
 	legacy := fmt.Sprintf("{\"time\":2,\"origin\":\"settings\",\"status\":\"ok\"}\n")
 	f, err := os.OpenFile(log.Path(), os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -61,11 +62,11 @@ func TestUsageRecordsConversationID(t *testing.T) {
 	if len(recent) != 2 {
 		t.Fatalf("recent = %d, want 2", len(recent))
 	}
-	if recent[0].ConversationID != "" {
-		t.Errorf("legacy conversation = %q, want empty", recent[0].ConversationID)
+	if recent[0].ConversationID != "" || recent[0].TaskID != "" {
+		t.Errorf("legacy record = %+v, want empty IDs", recent[0])
 	}
-	if recent[1].ConversationID != "c-1a2b3c4d" {
-		t.Errorf("conversation = %q", recent[1].ConversationID)
+	if recent[1].ConversationID != "c-1a2b3c4d" || recent[1].TaskID != "t-1a2b3c4d" {
+		t.Errorf("record = %+v", recent[1])
 	}
 }
 

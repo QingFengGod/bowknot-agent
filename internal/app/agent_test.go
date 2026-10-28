@@ -53,7 +53,7 @@ func TestNewAgentPageSelectsRecentConversation(t *testing.T) {
 		}
 	}
 
-	page := newAgentPage(stubChatter{snap: gateway.Snapshot{State: gateway.StateOnline, Model: "m1"}}, dir)
+	page := newAgentPage(stubChatter{snap: gateway.Snapshot{State: gateway.StateOnline, Model: "m1"}}, dir, "", "")
 	if page.CurrentID != newer.ID {
 		t.Errorf("current = %q, want the most recent conversation %q", page.CurrentID, newer.ID)
 	}
@@ -64,7 +64,7 @@ func TestNewAgentPageSelectsRecentConversation(t *testing.T) {
 }
 
 func TestNewAgentPageWithoutConversations(t *testing.T) {
-	page := newAgentPage(stubChatter{}, t.TempDir())
+	page := newAgentPage(stubChatter{}, t.TempDir(), "", "")
 	if page.CurrentID != "" {
 		t.Errorf("current = %q, want empty", page.CurrentID)
 	}

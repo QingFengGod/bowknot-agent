@@ -50,3 +50,10 @@ func TestAgentDir(t *testing.T) {
 		t.Errorf("agentDir(%q) = %q, want %q", dir, got, want)
 	}
 }
+
+func TestTaskDir(t *testing.T) {
+	dir := filepath.Join("home", "user", ".bowknot-agent")
+	if got, want := taskDir(dir), filepath.Join(dir, "tasks"); got != want {
+		t.Errorf("taskDir(%q) = %q, want %q", dir, got, want)
+	}
+}

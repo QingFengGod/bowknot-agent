@@ -25,6 +25,9 @@ type Composer struct {
 	// Models are the chat targets to choose from; Model takes the choice.
 	Models []string
 	Model  *string
+	// ModelFixed shows a bound target instead of the picker, as a sub agent
+	// conversation whose model comes from its own settings.
+	ModelFixed string
 	// Hint explains a blocked or failed send, beside the controls.
 	Hint string
 	// Busy is whether a reply is being generated; the send button becomes
@@ -40,6 +43,13 @@ type Composer struct {
 	OnSubmit func(text string) bool
 	// OnAttach opens the file picker; a nil value grays out the attach slot.
 	OnAttach func()
+	// TaskMode is whether the draft is sent as a task plan.
+	TaskMode bool
+	// TaskModeDisabled turns off the task mode tag, such as when no sub agent
+	// can accept work.
+	TaskModeDisabled bool
+	// OnToggleTaskMode flips the task mode; a nil value hides the tag.
+	OnToggleTaskMode func()
 }
 
 // ComposerView draws the composer. Enter sends, Shift+Enter breaks the line.
@@ -69,6 +79,7 @@ func ComposerView(c *mygoui.Context, t *mygoui.Theme, m Composer) mygoui.Element
 		row := mygoui.Row(c).FillWidth().Shrink(0).Gap(6).AlignItems(mygoui.Center)
 		row.Children(func() {
 			attachButton(c, t, m)
+			taskModeTag(c, t, m)
 			if m.Hint != "" {
 				mygoui.Text(c, m.Hint).FontSize(10).TextColor(t.TextMuted).
 					SingleLine().Grow(1)
@@ -102,8 +113,42 @@ func attachButton(c *mygoui.Context, t *mygoui.Theme, m Composer) {
 	}
 }
 
-// modelPicker switches the chat target beside the send button.
+// taskModeTag flips the draft between a chat and a task plan. It is an
+// outlined chip while on and muted text while off.
+func taskModeTag(c *mygoui.Context, t *mygoui.Theme, m Composer) {
+	if m.OnToggleTaskMode == nil {
+		return
+	}
+	b := mygoui.ButtonBase(c).Shrink(0).Label("任务模式").
+		Padding(3, 8).Radius(composerRadius / 2).
+		BorderWidth(1).BorderColor(t.Border).Center()
+	if m.TaskModeDisabled {
+		b.Disabled(true)
+	} else if m.TaskMode {
+		b.BorderColor(t.Accent)
+	} else if b.Hovered() {
+		b.Background(t.SurfaceHover)
+	}
+	b.Children(func() {
+		color := t.TextMuted
+		if m.TaskMode && !m.TaskModeDisabled {
+			color = t.Accent
+		}
+		mygoui.Text(c, "任务模式").FontSize(10).TextColor(color)
+	})
+	if b.Clicked() && !m.TaskModeDisabled {
+		m.OnToggleTaskMode()
+	}
+}
+
+// modelPicker switches the chat target beside the send button, or shows the
+// bound target of a sub agent.
 func modelPicker(c *mygoui.Context, t *mygoui.Theme, m Composer) {
+	if m.ModelFixed != "" {
+		mygoui.Text(c, m.ModelFixed).FontSize(11).TextColor(t.TextMuted).
+			Shrink(0).SingleLine()
+		return
+	}
 	if len(m.Models) == 0 || m.Model == nil {
 		mygoui.Text(c, "模型未配置").FontSize(11).TextColor(t.TextMuted).Shrink(0).SingleLine()
 		return

@@ -47,6 +47,7 @@ type Runner struct {
 
 	mu         sync.Mutex
 	run        *runState
+	external   bool
 	notice     string
 	providerID string
 	model      string
@@ -57,6 +58,32 @@ func NewRunner(chatter Chatter, store *Store) *Runner {
 	return &Runner{chatter: chatter, store: store}
 }
 
+// ReserveExternal occupies the single generation slot for a dispatch. It
+// reports false when the slot is already taken, leaving nothing to release.
+func (r *Runner) ReserveExternal() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.run != nil || r.external {
+		return false
+	}
+	r.external = true
+	return true
+}
+
+// ReleaseExternal frees the slot taken by ReserveExternal.
+func (r *Runner) ReleaseExternal() {
+	r.mu.Lock()
+	r.external = false
+	r.mu.Unlock()
+}
+
+// External reports whether a dispatch occupies the generation slot.
+func (r *Runner) External() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.external
+}
+
 // Notice returns the last save or local failure shown to the user.
 func (r *Runner) Notice() string {
 	r.mu.Lock()
@@ -64,11 +91,19 @@ func (r *Runner) Notice() string {
 	return r.notice
 }
 
-// Busy reports whether a generation is running.
+// Busy reports whether a reply is streaming.
 func (r *Runner) Busy() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.run != nil
+}
+
+// Blocked reports whether the single generation slot is taken by a reply or
+// a dispatch.
+func (r *Runner) Blocked() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.run != nil || r.external
 }
 
 // RunningConversation returns the conversation receiving the current reply.
@@ -99,12 +134,21 @@ func (r *Runner) Target() (providerID, model string) {
 // Start appends an assistant placeholder and streams a reply for it. The
 // context is cancelled by Stop or Shutdown; a nil context runs detached.
 func (r *Runner) Start(ctx context.Context, conversationID string) error {
+	r.mu.Lock()
+	providerID, model := r.providerID, r.model
+	r.mu.Unlock()
+	return r.StartWith(ctx, conversationID, providerID, model, SystemPrompt)
+}
+
+// StartWith streams a reply with an explicit route target and system persona.
+// It lets a sub agent conversation use its own binding and persona without
+// changing the pinned target of the main agent.
+func (r *Runner) StartWith(ctx context.Context, conversationID, providerID, model, persona string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	r.mu.Lock()
-	busy := r.run != nil
-	providerID, model := r.providerID, r.model
+	busy := r.run != nil || r.external
 	r.mu.Unlock()
 	if busy {
 		return ErrBusy
@@ -120,7 +164,7 @@ func (r *Runner) Start(ctx context.Context, conversationID string) error {
 		ProviderID:     providerID,
 		Model:          model,
 		ConversationID: conversationID,
-		Messages:       buildMessages(conv),
+		Messages:       buildMessages(conv, persona),
 		Stream:         true,
 	}
 	index, err := r.store.Append(conversationID, Message{
@@ -181,7 +225,16 @@ func (r *Runner) Shutdown() {
 // same preceding context.
 func (r *Runner) Regenerate(ctx context.Context, conversationID string) error {
 	r.mu.Lock()
-	busy := r.run != nil
+	providerID, model := r.providerID, r.model
+	r.mu.Unlock()
+	return r.RegenerateWith(ctx, conversationID, providerID, model, SystemPrompt)
+}
+
+// RegenerateWith regenerates a reply with an explicit route target and
+// persona, as a sub agent conversation needs.
+func (r *Runner) RegenerateWith(ctx context.Context, conversationID, providerID, model, persona string) error {
+	r.mu.Lock()
+	busy := r.run != nil || r.external
 	r.mu.Unlock()
 	if busy {
 		return ErrBusy
@@ -196,7 +249,7 @@ func (r *Runner) Regenerate(ctx context.Context, conversationID string) error {
 	if err := r.store.Save(conversationID); err != nil {
 		r.setNotice(fmt.Sprintf("会话保存失败：%v", err))
 	}
-	return r.Start(ctx, conversationID)
+	return r.StartWith(ctx, conversationID, providerID, model, persona)
 }
 
 func (r *Runner) execute(ctx context.Context, state *runState, req gateway.ChatRequest) {
@@ -294,9 +347,12 @@ func (r *Runner) repaint() {
 // buildMessages turns a conversation into the request context. The system
 // persona always comes first, and empty assistant turns are dropped so a
 // failed call does not pollute the next one.
-func buildMessages(c Conversation) []gateway.ChatMessage {
+func buildMessages(c Conversation, persona string) []gateway.ChatMessage {
+	if strings.TrimSpace(persona) == "" {
+		persona = SystemPrompt
+	}
 	out := make([]gateway.ChatMessage, 0, len(c.Messages)+1)
-	out = append(out, gateway.ChatMessage{Role: "system", Content: SystemPrompt})
+	out = append(out, gateway.ChatMessage{Role: "system", Content: persona})
 	for _, m := range c.Messages {
 		if m.Role == RoleAssistant && strings.TrimSpace(m.Content) == "" {
 			continue

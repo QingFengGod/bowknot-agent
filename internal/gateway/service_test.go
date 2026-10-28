@@ -247,6 +247,7 @@ func TestServiceChatRecordsConversationID(t *testing.T) {
 	}
 	if _, err := svc.Chat(context.Background(), ChatRequest{
 		ConversationID: "c-1a2b3c4d",
+		TaskID:         "t-1a2b3c4d",
 		Messages:       []ChatMessage{{Role: "user", Content: "hi"}},
 	}, "agent"); err != nil {
 		t.Fatal(err)
@@ -258,7 +259,8 @@ func TestServiceChatRecordsConversationID(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("usage = %d records, want 1", len(records))
 	}
-	if records[0].Origin != "agent" || records[0].ConversationID != "c-1a2b3c4d" {
+	if records[0].Origin != "agent" || records[0].ConversationID != "c-1a2b3c4d" ||
+		records[0].TaskID != "t-1a2b3c4d" {
 		t.Errorf("record = %+v", records[0])
 	}
 }

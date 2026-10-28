@@ -19,11 +19,13 @@ type ChatRequest struct {
 	ProviderID     string
 	Model          string
 	ConversationID string
-	Messages       []ChatMessage
-	MaxTokens      int
-	Temperature    *float64
-	Stream         bool
-	OnDelta        func(string)
+	// TaskID links a dispatched task call to its usage record.
+	TaskID      string
+	Messages    []ChatMessage
+	MaxTokens   int
+	Temperature *float64
+	Stream      bool
+	OnDelta     func(string)
 }
 
 // ChatResponse is a completed chat call.

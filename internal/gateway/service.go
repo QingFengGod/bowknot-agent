@@ -427,7 +427,7 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, origin string) (Cha
 		if model == "" {
 			model = t.Model
 		}
-		s.recordUsage(origin, req.ConversationID, t, model, resp.InputTokens, resp.OutputTokens, resp.HasUsage, time.Since(start), err)
+		s.recordUsage(origin, req.ConversationID, req.TaskID, t, model, resp.InputTokens, resp.OutputTokens, resp.HasUsage, time.Since(start), err)
 		if err == nil {
 			s.setLiveOutcome(nil)
 			return resp, nil
@@ -467,7 +467,7 @@ func (s *Service) ChatProvider(ctx context.Context, providerID, model string, re
 	if actual == "" {
 		actual = model
 	}
-	s.recordUsage(origin, req.ConversationID, t, actual, resp.InputTokens, resp.OutputTokens, resp.HasUsage, time.Since(start), err)
+	s.recordUsage(origin, req.ConversationID, req.TaskID, t, actual, resp.InputTokens, resp.OutputTokens, resp.HasUsage, time.Since(start), err)
 	s.setLiveOutcome(err)
 	if err != nil {
 		return ChatResponse{}, err
@@ -489,7 +489,7 @@ func (s *Service) Embed(ctx context.Context, req EmbedRequest, origin string) (E
 		if model == "" {
 			model = t.Model
 		}
-		s.recordUsage(origin, "", t, model, resp.InputTokens, 0, resp.HasUsage, time.Since(start), err)
+		s.recordUsage(origin, "", "", t, model, resp.InputTokens, 0, resp.HasUsage, time.Since(start), err)
 		if err == nil {
 			return resp, nil
 		}
@@ -589,11 +589,12 @@ func (s *Service) acquire(ctx context.Context, providerID string) (func(), error
 	}
 }
 
-func (s *Service) recordUsage(origin, conversationID string, t Target, model string, inputTokens, outputTokens int, hasUsage bool, duration time.Duration, err error) {
+func (s *Service) recordUsage(origin, conversationID, taskID string, t Target, model string, inputTokens, outputTokens int, hasUsage bool, duration time.Duration, err error) {
 	rec := UsageRecord{
 		Time:           s.now().Unix(),
 		Origin:         origin,
 		ConversationID: conversationID,
+		TaskID:         taskID,
 		ProviderID:     t.Provider.ID,
 		ProviderName:   t.Provider.Name,
 		Model:          model,
