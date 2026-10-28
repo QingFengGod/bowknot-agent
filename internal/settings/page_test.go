@@ -3,7 +3,9 @@ package settings
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	mygoui "github.com/egoist/mygo/ui"
 
@@ -113,9 +115,25 @@ func newTester(t *testing.T, p *Page) *mygoui.Tester {
 	return mygoui.NewTester(p.View(), 1100, 1600)
 }
 
-func sampleEntry(id, name, masked string, models ...string) gateway.ProviderEntry {
+// waitUntil waits for an async callback the view started in a goroutine.
+func waitUntil(t *testing.T, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !done() && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !done() {
+		t.Fatal("async action did not finish")
+	}
+}
+
+func sampleEntry(id, name, masked string, ids ...string) gateway.ProviderEntry {
 	last := &gateway.TestResult{OK: true, Kind: gateway.TestKindModels,
 		Message: "2 个模型可用", At: 1790000000}
+	models := make([]gateway.Model, 0, len(ids))
+	for _, modelID := range ids {
+		models = append(models, gateway.Model{ID: modelID})
+	}
 	return gateway.ProviderEntry{
 		Provider: gateway.Provider{ID: id, Name: name, Type: gateway.ProviderOpenAI,
 			BaseURL: "https://api.example.com/v1", Enabled: true,
@@ -152,7 +170,20 @@ func TestSettingsAddProviderForm(t *testing.T) {
 	p.FormName = "本地模型"
 	p.FormBaseURL = "https://api.example.com/v1"
 	p.FormKey = "sk-test-1234"
-	p.FormModels = "gpt-4o-mini\n\ngpt-4o\n"
+	tester.Frame()
+	if err := tester.Click("添加模型"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tester.Click("添加模型"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(p.FormModels) != 2 {
+		t.Fatalf("model drafts = %d, want 2", len(p.FormModels))
+	}
+	p.FormModels[0] = modelDraft{ID: "gpt-4o-mini", Context: "128000",
+		MaxOut: "16384", Images: true}
+	p.FormModels[1] = modelDraft{ID: "gpt-4o", Tools: true}
 	tester.Frame()
 	if err := tester.Click("保存"); err != nil {
 		t.Fatal(err)
@@ -170,7 +201,15 @@ func TestSettingsAddProviderForm(t *testing.T) {
 		t.Errorf("saved = %+v", saved)
 	}
 	if len(saved.Models) != 2 {
-		t.Errorf("models = %+v, want 2", saved.Models)
+		t.Fatalf("models = %+v, want 2", saved.Models)
+	}
+	first, second := saved.Models[0], saved.Models[1]
+	if first.ID != "gpt-4o-mini" || first.ContextWindow != 128000 ||
+		first.MaxOutputTokens != 16384 || !first.SupportsImages || first.SupportsTools {
+		t.Errorf("first model = %+v", first)
+	}
+	if second.ID != "gpt-4o" || !second.SupportsTools || second.ContextWindow != 0 {
+		t.Errorf("second model = %+v", second)
 	}
 	if fake.savedKey != "sk-test-1234" {
 		t.Errorf("key = %q", fake.savedKey)
@@ -241,8 +280,8 @@ func TestSettingsEditKeepsOldKey(t *testing.T) {
 	if !p.FormOpen || p.FormID != "p-00000001" || p.FormKey != "" {
 		t.Fatalf("editor = %+v", p)
 	}
-	if p.FormModels != "m1" {
-		t.Errorf("models = %q", p.FormModels)
+	if len(p.FormModels) != 1 || p.FormModels[0].ID != "m1" {
+		t.Errorf("model drafts = %+v", p.FormModels)
 	}
 	tester.Frame()
 	if err := tester.Click("取消"); err != nil {
@@ -446,12 +485,64 @@ func TestSettingsTestProviderResult(t *testing.T) {
 	if err := tester.Click("测试 OpenAI"); err != nil {
 		t.Fatal(err)
 	}
+	waitUntil(t, func() bool { return p.TestingID == "" })
 	tester.Frame()
-	if p.TestingID != "" {
-		t.Errorf("TestingID = %q, want empty", p.TestingID)
-	}
 	if !tester.HasText("测试成功 · 3 个模型可用") {
 		t.Error("test result is not shown")
+	}
+}
+
+func TestSettingsModelFormValidation(t *testing.T) {
+	fake := newFakeGateway()
+	p := NewPage(fake)
+	tester := newTester(t, p)
+	p.FormOpen = true
+	p.FormName = "A"
+	p.FormBaseURL = "https://api.example.com/v1"
+
+	cases := []struct {
+		name   string
+		models []modelDraft
+		want   string
+	}{
+		{"bad context", []modelDraft{{ID: "m1", Context: "abc"}}, "上下文长度"},
+		{"output over context", []modelDraft{{ID: "m1", Context: "1000", MaxOut: "2000"}},
+			"不能大于上下文长度"},
+		{"missing id", []modelDraft{{Images: true}}, "模型 ID 不能为空"},
+		{"duplicate id", []modelDraft{{ID: "m1"}, {ID: "m1"}}, "模型 ID 重复"},
+	}
+	for _, tc := range cases {
+		p.FormModels = tc.models
+		p.FormError = ""
+		tester.Frame()
+		if err := tester.Click("保存"); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		tester.Frame()
+		if !p.FormOpen || !strings.Contains(p.FormError, tc.want) {
+			t.Fatalf("%s: error = %q, open = %v", tc.name, p.FormError, p.FormOpen)
+		}
+		if len(fake.saved) != 0 {
+			t.Fatalf("%s: saved %d providers", tc.name, len(fake.saved))
+		}
+		if !tester.HasText(tc.want) {
+			t.Errorf("%s: %q is not shown", tc.name, tc.want)
+		}
+	}
+}
+
+func TestSettingsRemoveModelDraft(t *testing.T) {
+	p := NewPage(newFakeGateway())
+	tester := newTester(t, p)
+	p.FormOpen = true
+	p.FormModels = []modelDraft{{ID: "m1"}, {ID: "m2"}}
+	tester.Frame()
+	if err := tester.Click("删除模型 1"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(p.FormModels) != 1 || p.FormModels[0].ID != "m2" {
+		t.Errorf("drafts = %+v, want only m2", p.FormModels)
 	}
 }
 
@@ -464,6 +555,7 @@ func TestSettingsTestProviderFailure(t *testing.T) {
 	if err := tester.Click("测试 OpenAI"); err != nil {
 		t.Fatal(err)
 	}
+	waitUntil(t, func() bool { return p.TestingID == "" })
 	tester.Frame()
 	if !tester.HasText("鉴权") {
 		t.Error("failure classification is not shown")

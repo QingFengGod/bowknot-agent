@@ -42,7 +42,8 @@ func TestConfigNormalizeDropsInvalidRoutes(t *testing.T) {
 		Providers: []Provider{
 			{ID: "p-00000001", Name: " A ", Type: ProviderOpenAI,
 				BaseURL: "https://a.example/v1/", Enabled: true,
-				Models: []string{" m1 ", "m2", "m1", ""}},
+				Models: []Model{{ID: " m1 ", ContextWindow: 128000},
+					{ID: "m2"}, {ID: "m1"}, {ID: ""}}},
 			{ID: "p-00000001", Name: "dup", Type: ProviderOpenAI, BaseURL: "https://b.example/v1"},
 		},
 		Routes: map[Capability][]Route{
@@ -63,8 +64,11 @@ func TestConfigNormalizeDropsInvalidRoutes(t *testing.T) {
 	if p.Name != "A" || p.BaseURL != "https://a.example/v1" {
 		t.Errorf("provider = %+v, want trimmed name and base URL", p)
 	}
-	if got := strings.Join(p.Models, ","); got != "m1,m2" {
+	if got := modelIDs(p.Models); got != "m1,m2" {
 		t.Errorf("models = %q, want m1,m2", got)
+	}
+	if p.Models[0].ContextWindow != 128000 {
+		t.Errorf("context window = %d, want 128000", p.Models[0].ContextWindow)
 	}
 	if len(cfg.Routes[CapabilityChat]) != 1 || cfg.Routes[CapabilityChat][0].Model != "m1" {
 		t.Errorf("chat routes = %+v, want only m1", cfg.Routes[CapabilityChat])
@@ -79,7 +83,7 @@ func TestConfigNormalizeDropsInvalidRoutes(t *testing.T) {
 
 func TestConfigValidate(t *testing.T) {
 	valid := Provider{ID: "p-00000001", Name: "OpenAI", Type: ProviderOpenAI,
-		BaseURL: "https://api.example/v1", Enabled: true, Models: []string{"m"}}
+		BaseURL: "https://api.example/v1", Enabled: true, Models: []Model{{ID: "m"}}}
 	cfg := &Config{Schema: ConfigSchema, Providers: []Provider{valid},
 		Routes: map[Capability][]Route{}}
 	if err := cfg.Validate(); err != nil {
@@ -96,6 +100,9 @@ func TestConfigValidate(t *testing.T) {
 		{"bad url", withURL(valid, "https://host"), "base_url"},
 		{"empty type", withType(valid, ""), "type"},
 		{"long model", withModels(valid, strings.Repeat("m", 129)), "models"},
+		{"negative context", withContext(valid, -1), "models"},
+		{"huge output", withOutput(valid, MaxModelTokens+1), "models"},
+		{"output over context", withLimits(valid, 1000, 2000), "models"},
 	}
 	for _, tc := range tests {
 		cfg := &Config{Schema: ConfigSchema, Providers: []Provider{tc.provider},
@@ -126,9 +133,37 @@ func withName(p Provider, name string) Provider { p.Name = name; return p }
 func withURL(p Provider, url string) Provider   { p.BaseURL = url; return p }
 func withType(p Provider, typ string) Provider  { p.Type = typ; return p }
 
-func withModels(p Provider, models ...string) Provider {
+func withModels(p Provider, ids ...string) Provider {
+	models := make([]Model, 0, len(ids))
+	for _, id := range ids {
+		models = append(models, Model{ID: id})
+	}
 	p.Models = models
 	return p
+}
+
+func withContext(p Provider, context int) Provider {
+	p.Models[0].ContextWindow = context
+	return p
+}
+
+func withOutput(p Provider, output int) Provider {
+	p.Models[0].MaxOutputTokens = output
+	return p
+}
+
+func withLimits(p Provider, context, output int) Provider {
+	p.Models[0].ContextWindow = context
+	p.Models[0].MaxOutputTokens = output
+	return p
+}
+
+func modelIDs(models []Model) string {
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
+		ids = append(ids, m.ID)
+	}
+	return strings.Join(ids, ",")
 }
 
 func TestConfigLoadAndSave(t *testing.T) {
@@ -139,7 +174,9 @@ func TestConfigLoadAndSave(t *testing.T) {
 	}
 	cfg := NewConfig()
 	cfg.Providers = []Provider{{ID: "p-00000001", Name: "Local", Type: ProviderOpenAI,
-		BaseURL: "http://127.0.0.1:1234/v1", Enabled: true, Models: []string{"m"}}}
+		BaseURL: "http://127.0.0.1:1234/v1", Enabled: true,
+		Models: []Model{{ID: "m", ContextWindow: 8192, MaxOutputTokens: 2048,
+			SupportsImages: true}}}}
 	cfg.Routes[CapabilityChat] = []Route{{Provider: "p-00000001", Model: "m"}}
 	if err := SaveConfig(path, cfg); err != nil {
 		t.Fatal(err)
@@ -153,6 +190,27 @@ func TestConfigLoadAndSave(t *testing.T) {
 	}
 	if len(loaded.Routes[CapabilityChat]) != 1 {
 		t.Errorf("loaded routes = %+v", loaded.Routes)
+	}
+	m := loaded.Providers[0].Models[0]
+	if m.ContextWindow != 8192 || m.MaxOutputTokens != 2048 || !m.SupportsImages {
+		t.Errorf("model metadata = %+v", m)
+	}
+}
+
+func TestConfigLoadRejectsOldSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ProvidersFileName)
+	raw := `{"schema":1,"providers":[{"id":"p-00000001","name":"Old",
+		"type":"openai","base_url":"https://api.example.com/v1","enabled":true,
+		"models":["m1"]}]}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("old schema loaded without an error")
+	}
+	if len(cfg.Providers) != 0 {
+		t.Errorf("providers = %+v, want an empty config", cfg.Providers)
 	}
 }
 

@@ -305,7 +305,7 @@ func (s *Service) SaveRoutes(cap Capability, routes []Route) error {
 			s.mu.Unlock()
 			return &ValidationError{Errors: []FieldError{{"routes", "路由目标指向不存在的供应商"}}}
 		}
-		if !containsString(cfg.Providers[i].Models, strings.TrimSpace(r.Model)) {
+		if !cfg.Providers[i].HasModel(strings.TrimSpace(r.Model)) {
 			s.mu.Unlock()
 			return &ValidationError{Errors: []FieldError{{"routes", "路由目标指向供应商未配置的模型"}}}
 		}
@@ -372,7 +372,7 @@ func (s *Service) TestProvider(ctx context.Context, id string) (TestResult, erro
 	if exists {
 		next.Providers[j].LastTest = &result
 		if result.OK && len(next.Providers[j].Models) == 0 {
-			next.Providers[j].Models = normalizeModels(models)
+			next.Providers[j].Models = modelsFromIDs(models)
 			fillDefaultRoutes(next)
 		}
 		next.Normalize()
@@ -436,7 +436,7 @@ func (s *Service) ChatProvider(ctx context.Context, providerID, model string, re
 	if !p.Enabled {
 		return ChatResponse{}, internalError("供应商已停用", nil)
 	}
-	if !containsString(p.Models, model) {
+	if !p.HasModel(model) {
 		return ChatResponse{}, internalError("模型不在供应商的模型列表中", nil)
 	}
 	t := Target{Provider: p, Model: model, Capability: CapabilityChat}

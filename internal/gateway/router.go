@@ -54,7 +54,7 @@ func resolveTargets(cfg *Config, registry *AdapterRegistry, cap Capability) []Ta
 		if _, ok := registry.Get(p.Type); !ok {
 			continue
 		}
-		if !containsString(p.Models, r.Model) {
+		if !p.HasModel(r.Model) {
 			continue
 		}
 		targets = append(targets, Target{Provider: p, Model: r.Model, Capability: cap})
@@ -71,7 +71,7 @@ func fillDefaultRoutes(cfg *Config) {
 	}
 	for _, cap := range EditableCapabilities {
 		if len(cfg.Routes[cap]) == 0 {
-			cfg.Routes[cap] = []Route{{Provider: p.ID, Model: p.Models[0]}}
+			cfg.Routes[cap] = []Route{{Provider: p.ID, Model: p.Models[0].ID}}
 		}
 	}
 }
@@ -98,7 +98,7 @@ func targetOptions(cfg *Config) []TargetView {
 			continue
 		}
 		for _, m := range p.Models {
-			out = append(out, TargetView{ProviderID: p.ID, ProviderName: p.Name, Model: m})
+			out = append(out, TargetView{ProviderID: p.ID, ProviderName: p.Name, Model: m.ID})
 		}
 	}
 	return out

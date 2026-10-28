@@ -15,10 +15,15 @@ import (
 )
 
 // ConfigSchema is the version of providers.json this build reads and writes.
-const ConfigSchema = 1
+// The format changed when models gained metadata; older files are rejected
+// rather than migrated, because nothing has shipped yet.
+const ConfigSchema = 2
 
 // MaxModels is the largest number of models kept per provider.
 const MaxModels = 100
+
+// MaxModelTokens bounds the context window and max output of a model.
+const MaxModelTokens = 10_000_000
 
 // ProviderOpenAI is the only provider type of this build.
 const ProviderOpenAI = "openai"
@@ -63,6 +68,16 @@ type TestResult struct {
 	At      int64  `json:"at"`
 }
 
+// Model is one model a provider offers, with the metadata agents need to
+// plan a request. Zero values mean the limit or the feature is unknown.
+type Model struct {
+	ID              string `json:"id"`
+	ContextWindow   int    `json:"context_window,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	SupportsImages  bool   `json:"supports_images,omitempty"`
+	SupportsTools   bool   `json:"supports_tools,omitempty"`
+}
+
 // Provider is one configured model service.
 type Provider struct {
 	ID       string      `json:"id"`
@@ -70,8 +85,18 @@ type Provider struct {
 	Type     string      `json:"type"`
 	BaseURL  string      `json:"base_url"`
 	Enabled  bool        `json:"enabled"`
-	Models   []string    `json:"models"`
+	Models   []Model     `json:"models"`
 	LastTest *TestResult `json:"last_test,omitempty"`
+}
+
+// HasModel reports whether the provider offers a model with the ID.
+func (p Provider) HasModel(id string) bool {
+	for _, m := range p.Models {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Config is the content of providers.json.
@@ -109,7 +134,7 @@ func (c *Config) Clone() *Config {
 
 // Clone returns a copy of the provider with its own model slice.
 func (p Provider) Clone() Provider {
-	p.Models = append([]string(nil), p.Models...)
+	p.Models = append([]Model(nil), p.Models...)
 	if p.LastTest != nil {
 		last := *p.LastTest
 		p.LastTest = &last
@@ -176,21 +201,30 @@ func (c *Config) Normalize() {
 	c.Routes = routes
 }
 
-func normalizeModels(models []string) []string {
-	out := make([]string, 0, len(models))
+func normalizeModels(models []Model) []Model {
+	out := make([]Model, 0, len(models))
 	seen := make(map[string]bool, len(models))
 	for _, m := range models {
-		m = strings.TrimSpace(m)
-		if m == "" || seen[m] || utf8.RuneCountInString(m) > 128 {
+		m.ID = strings.TrimSpace(m.ID)
+		if m.ID == "" || seen[m.ID] || utf8.RuneCountInString(m.ID) > 128 {
 			continue
 		}
-		seen[m] = true
+		seen[m.ID] = true
 		out = append(out, m)
 		if len(out) == MaxModels {
 			break
 		}
 	}
 	return out
+}
+
+// modelsFromIDs turns the model IDs of a connection test into models.
+func modelsFromIDs(ids []string) []Model {
+	models := make([]Model, 0, len(ids))
+	for _, id := range ids {
+		models = append(models, Model{ID: id})
+	}
+	return normalizeModels(models)
 }
 
 func normalizeRoutes(c *Config, routes []Route) []Route {
@@ -203,22 +237,13 @@ func normalizeRoutes(c *Config, routes []Route) []Route {
 			continue
 		}
 		i, ok := c.ProviderByID(r.Provider)
-		if !ok || !containsString(c.Providers[i].Models, r.Model) {
+		if !ok || !c.Providers[i].HasModel(r.Model) {
 			continue
 		}
 		seen[r] = true
 		out = append(out, r)
 	}
 	return out
-}
-
-func containsString(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 // Validate reports the field errors that prevent saving.
@@ -257,14 +282,34 @@ func (c *Config) Validate() error {
 			errs = append(errs, FieldError{"models", fmt.Sprintf("模型最多 %d 条", MaxModels)})
 		}
 		for _, m := range p.Models {
-			if m == "" || utf8.RuneCountInString(m) > 128 {
+			if m.ID == "" || utf8.RuneCountInString(m.ID) > 128 {
 				errs = append(errs, FieldError{"models", "模型名称需要 1–128 个字符"})
+				break
+			}
+			if err := validateTokens(m.ContextWindow); err != nil {
+				errs = append(errs, FieldError{"models", "上下文长度" + err.Error()})
+				break
+			}
+			if err := validateTokens(m.MaxOutputTokens); err != nil {
+				errs = append(errs, FieldError{"models", "最大输出" + err.Error()})
+				break
+			}
+			if m.MaxOutputTokens > 0 && m.ContextWindow > 0 &&
+				m.MaxOutputTokens > m.ContextWindow {
+				errs = append(errs, FieldError{"models", "最大输出不能大于上下文长度"})
 				break
 			}
 		}
 	}
 	if len(errs) > 0 {
 		return &ValidationError{Errors: errs}
+	}
+	return nil
+}
+
+func validateTokens(v int) error {
+	if v < 0 || v > MaxModelTokens {
+		return fmt.Errorf("需为 0–%d 的整数", MaxModelTokens)
 	}
 	return nil
 }

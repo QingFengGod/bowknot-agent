@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,16 @@ type routeState struct {
 	notice  string
 }
 
+// modelDraft is the unsaved form of one model. Numbers stay text so that the
+// fields can be left empty.
+type modelDraft struct {
+	ID      string
+	Context string
+	MaxOut  string
+	Images  bool
+	Tools   bool
+}
+
 // Page is the settings module: model providers, routes and a single-turn
 // chat test. The app holds one Page for the life of the process, so switching
 // modules keeps the editor and test results.
@@ -67,9 +78,11 @@ type Page struct {
 	FormName    string
 	FormBaseURL string
 	FormKey     string
-	FormModels  string
+	FormModels  []modelDraft
 	FormEnabled bool
 	FormError   string
+	// FormRemoveModel is the model row a click asked to remove; -1 is none.
+	FormRemoveModel int
 
 	// ProviderNotice is the last provider action error or test notice.
 	ProviderNotice string
@@ -94,8 +107,9 @@ type Page struct {
 // NewPage creates the settings page and loads the current drafts.
 func NewPage(gw Gateway) *Page {
 	p := &Page{
-		Gateway:     gw,
-		FormEnabled: true,
+		Gateway:         gw,
+		FormEnabled:     true,
+		FormRemoveModel: -1,
 		Routes: map[gateway.Capability]*routeState{
 			gateway.CapabilityChat:      {},
 			gateway.CapabilityEmbedding: {},
@@ -234,6 +248,8 @@ func (p *Page) providerRow(c *mygoui.Context, t *mygoui.Theme, entry gateway.Pro
 					TextColor(t.TextMuted).SingleLine()
 				mygoui.Text(c, "密钥 "+entry.KeyMasked).FontSize(11).
 					TextColor(t.TextMuted).SingleLine()
+				mygoui.Text(c, modelSummary(prov)).FontSize(11).
+					TextColor(t.TextMuted).SingleLine()
 				mygoui.Text(c, lastTestText(prov)).FontSize(11).
 					TextColor(t.TextMuted).SingleLine()
 			})
@@ -267,6 +283,27 @@ func (p *Page) providerRow(c *mygoui.Context, t *mygoui.Theme, entry gateway.Pro
 			})
 		}
 	})
+}
+
+func modelSummary(prov gateway.Provider) string {
+	if len(prov.Models) == 0 {
+		return "尚未配置模型（连接测试成功会自动填入）"
+	}
+	first := prov.Models[0]
+	text := fmt.Sprintf("模型 %d 个 · %s", len(prov.Models), first.ID)
+	if first.ContextWindow > 0 {
+		text += fmt.Sprintf(" · 上下文 %d", first.ContextWindow)
+	}
+	if first.MaxOutputTokens > 0 {
+		text += fmt.Sprintf(" · 输出 %d", first.MaxOutputTokens)
+	}
+	if first.SupportsImages {
+		text += " · 图片"
+	}
+	if first.SupportsTools {
+		text += " · 工具"
+	}
+	return text
 }
 
 func lastTestText(prov gateway.Provider) string {
@@ -318,10 +355,28 @@ func (p *Page) editor(c *mygoui.Context, t *mygoui.Theme) {
 			mygoui.TextInput(c, &p.FormKey).Width(420).Password().
 				Label("密钥").Placeholder("留空保留已保存的密钥")
 		})
-		p.field(c, t, "模型（每行一个）", func() {
-			mygoui.TextArea(c, &p.FormModels).Width(420).Height(90).
-				Label("模型")
+		modelHead := mygoui.Row(c).FillWidth().Gap(8).AlignItems(mygoui.Center)
+		modelHead.Children(func() {
+			mygoui.Text(c, "模型").FontSize(12).TextColor(t.TextMuted)
+			mygoui.Text(c, "每个模型可单独填写上下文长度、最大输出与多模态能力").
+				FontSize(11).TextColor(t.TextMuted)
+			mygoui.Spacer(c)
+			p.button(c, t, "添加模型", false, false, p.addModelDraft)
 		})
+		for i := range p.FormModels {
+			p.modelRow(c, t, i)
+		}
+		if p.FormRemoveModel >= 0 {
+			if p.FormRemoveModel < len(p.FormModels) {
+				p.FormModels = append(p.FormModels[:p.FormRemoveModel],
+					p.FormModels[p.FormRemoveModel+1:]...)
+			}
+			p.FormRemoveModel = -1
+		}
+		if len(p.FormModels) == 0 {
+			mygoui.Text(c, "尚未添加模型；留空时连接测试成功会自动填入模型 ID。").
+				FontSize(11).TextColor(t.TextMuted).Wrap()
+		}
 		mygoui.Checkbox(c, &p.FormEnabled, "启用该供应商").Label("启用该供应商")
 		if p.FormError != "" {
 			mygoui.Text(c, p.FormError).FontSize(12).
@@ -354,15 +409,55 @@ func (p *Page) field(c *mygoui.Context, t *mygoui.Theme, label string, build fun
 	})
 }
 
+func (p *Page) modelRow(c *mygoui.Context, t *mygoui.Theme, index int) {
+	m := &p.FormModels[index]
+	n := index + 1
+	row := mygoui.Column(c).FillWidth().Padding(8).Gap(6).Radius(t.Radius).
+		Background(t.Surface).BorderWidth(1).BorderColor(t.Border)
+	row.Children(func() {
+		fields := mygoui.Row(c).FillWidth().Gap(10).AlignItems(mygoui.Center)
+		fields.Children(func() {
+			p.field(c, t, "模型 ID", func() {
+				mygoui.TextInput(c, &m.ID).Width(240).
+					Label(fmt.Sprintf("模型 %d ID", n)).Placeholder("例如 gpt-4o-mini")
+			})
+			p.field(c, t, "上下文长度", func() {
+				mygoui.TextInput(c, &m.Context).Width(130).
+					Label(fmt.Sprintf("模型 %d 上下文长度", n)).Placeholder("例如 128000")
+			})
+			p.field(c, t, "最大输出", func() {
+				mygoui.TextInput(c, &m.MaxOut).Width(130).
+					Label(fmt.Sprintf("模型 %d 最大输出", n)).Placeholder("例如 8192")
+			})
+			mygoui.Spacer(c)
+			p.buttonLabeled(c, t, "删除", fmt.Sprintf("删除模型 %d", n), false, false, func() {
+				p.FormRemoveModel = index
+			})
+		})
+		flags := mygoui.Row(c).FillWidth().Gap(16).AlignItems(mygoui.Center)
+		flags.Children(func() {
+			mygoui.Checkbox(c, &m.Images, "支持图片").
+				Label(fmt.Sprintf("模型 %d 支持图片", n))
+			mygoui.Checkbox(c, &m.Tools, "支持工具调用").
+				Label(fmt.Sprintf("模型 %d 支持工具调用", n))
+		})
+	})
+}
+
+func (p *Page) addModelDraft() {
+	p.FormModels = append(p.FormModels, modelDraft{})
+}
+
 func (p *Page) openNewForm() {
 	p.FormOpen = true
 	p.FormID = ""
 	p.FormName = ""
 	p.FormBaseURL = ""
 	p.FormKey = ""
-	p.FormModels = ""
+	p.FormModels = nil
 	p.FormEnabled = true
 	p.FormError = ""
+	p.FormRemoveModel = -1
 }
 
 func (p *Page) openEditForm(prov gateway.Provider) {
@@ -371,9 +466,20 @@ func (p *Page) openEditForm(prov gateway.Provider) {
 	p.FormName = prov.Name
 	p.FormBaseURL = prov.BaseURL
 	p.FormKey = ""
-	p.FormModels = strings.Join(prov.Models, "\n")
+	p.FormModels = make([]modelDraft, 0, len(prov.Models))
+	for _, m := range prov.Models {
+		draft := modelDraft{ID: m.ID, Images: m.SupportsImages, Tools: m.SupportsTools}
+		if m.ContextWindow > 0 {
+			draft.Context = strconv.Itoa(m.ContextWindow)
+		}
+		if m.MaxOutputTokens > 0 {
+			draft.MaxOut = strconv.Itoa(m.MaxOutputTokens)
+		}
+		p.FormModels = append(p.FormModels, draft)
+	}
 	p.FormEnabled = prov.Enabled
 	p.FormError = ""
+	p.FormRemoveModel = -1
 }
 
 func (p *Page) closeForm() {
@@ -381,10 +487,17 @@ func (p *Page) closeForm() {
 	p.FormID = ""
 	p.FormKey = ""
 	p.FormError = ""
+	p.FormModels = nil
+	p.FormRemoveModel = -1
 }
 
 func (p *Page) saveForm() {
 	if p.Gateway == nil {
+		return
+	}
+	models, err := p.formModels()
+	if err != nil {
+		p.FormError = err.Error()
 		return
 	}
 	prov := gateway.Provider{
@@ -393,7 +506,7 @@ func (p *Page) saveForm() {
 		Type:    gateway.ProviderOpenAI,
 		BaseURL: p.FormBaseURL,
 		Enabled: p.FormEnabled,
-		Models:  splitModels(p.FormModels),
+		Models:  models,
 	}
 	saved, err := p.Gateway.SaveProvider(prov, p.FormKey)
 	if err != nil {
@@ -408,15 +521,56 @@ func (p *Page) saveForm() {
 	p.repaint()
 }
 
-func splitModels(text string) []string {
-	var models []string
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			models = append(models, line)
+// formModels validates the model rows and converts them. A row left empty is
+// skipped; a partly filled row is reported instead of silently dropped.
+func (p *Page) formModels() ([]gateway.Model, error) {
+	models := make([]gateway.Model, 0, len(p.FormModels))
+	seen := make(map[string]bool, len(p.FormModels))
+	for i := range p.FormModels {
+		d := &p.FormModels[i]
+		n := i + 1
+		id := strings.TrimSpace(d.ID)
+		if id == "" && strings.TrimSpace(d.Context) == "" &&
+			strings.TrimSpace(d.MaxOut) == "" && !d.Images && !d.Tools {
+			continue
 		}
+		if id == "" {
+			return nil, fmt.Errorf("模型 %d：模型 ID 不能为空", n)
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("模型 %d：模型 ID 重复：%s", n, id)
+		}
+		seen[id] = true
+		context, err := p.tokenField(n, "上下文长度", d.Context)
+		if err != nil {
+			return nil, err
+		}
+		maxOut, err := p.tokenField(n, "最大输出", d.MaxOut)
+		if err != nil {
+			return nil, err
+		}
+		if context > 0 && maxOut > context {
+			return nil, fmt.Errorf("模型 %d：最大输出不能大于上下文长度", n)
+		}
+		models = append(models, gateway.Model{
+			ID: id, ContextWindow: context, MaxOutputTokens: maxOut,
+			SupportsImages: d.Images, SupportsTools: d.Tools,
+		})
 	}
-	return models
+	return models, nil
+}
+
+func (p *Page) tokenField(index int, label, text string) (int, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(text)
+	if err != nil || v < 0 || v > gateway.MaxModelTokens {
+		return 0, fmt.Errorf("模型 %d：%s需为 0–%d 的整数",
+			index, label, gateway.MaxModelTokens)
+	}
+	return v, nil
 }
 
 func validationText(err error) string {

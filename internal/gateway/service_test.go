@@ -39,7 +39,7 @@ func addProvider(t *testing.T, svc *Service, baseURL, name, path string, models 
 		Type:    ProviderOpenAI,
 		BaseURL: baseURL + path,
 		Enabled: true,
-		Models:  models,
+		Models:  modelsFromIDs(models),
 	}, "sk-"+name)
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestServiceTestProviderFillsModelsAndRoutes(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	entries := svc.Entries()
-	if got := strings.Join(entries[0].Provider.Models, ","); got != "m1,m2" {
+	if got := modelIDs(entries[0].Provider.Models); got != "m1,m2" {
 		t.Errorf("models = %q, want m1,m2", got)
 	}
 	snap := svc.Snapshot()
