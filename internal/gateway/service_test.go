@@ -99,11 +99,11 @@ func TestServiceSnapshotStates(t *testing.T) {
 	}
 	p := addProvider(t, svc, url, "Primary", "/v1", "m1")
 	snap := svc.Snapshot()
-	if snap.State != StateOffline || snap.Model != "m1" {
-		t.Errorf("snapshot = %+v, want offline with m1", snap)
+	if snap.State != StateOnline || snap.Model != "m1" {
+		t.Errorf("snapshot = %+v, want online with m1 before the first test", snap)
 	}
 	if snap.Reason == "" {
-		t.Error("offline snapshot has no reason")
+		t.Error("untested snapshot has no hint")
 	}
 	if err := svc.SetProviderEnabled(p.ID, false); err != nil {
 		t.Fatal(err)
@@ -202,6 +202,64 @@ func TestServiceChatFallsBack(t *testing.T) {
 	}
 	if records[1].Status != UsageError || records[1].ErrorCode != KindAuth {
 		t.Errorf("oldest = %+v, want A auth error", records[1])
+	}
+}
+
+func TestServiceChatPinsTarget(t *testing.T) {
+	handler := func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK,
+			`{"model":"m1","choices":[{"message":{"content":"ok"}}]}`), nil
+	}
+	svc, url := newTestService(t, handler)
+	p := addProvider(t, svc, url, "A", "/v1", "m1", "m2")
+	if err := svc.SaveRoutes(CapabilityChat, []Route{
+		{Provider: p.ID, Model: "m1"}, {Provider: p.ID, Model: "m2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if targets := svc.ChatTargets(); len(targets) != 2 {
+		t.Fatalf("chat targets = %d, want 2", len(targets))
+	}
+	resp, err := svc.Chat(context.Background(), ChatRequest{
+		ProviderID: p.ID, Model: "m2",
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	}, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Content != "ok" {
+		t.Errorf("content = %q", resp.Content)
+	}
+	if _, err := svc.Chat(context.Background(), ChatRequest{Model: "missing"}, "agent"); err == nil {
+		t.Error("pinning a model outside the routes succeeded")
+	}
+}
+
+func TestServiceChatRecordsConversationID(t *testing.T) {
+	handler := func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK,
+			`{"model":"m1","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`), nil
+	}
+	svc, url := newTestService(t, handler)
+	p := addProvider(t, svc, url, "A", "/v1", "m1")
+	if err := svc.SaveRoutes(CapabilityChat, []Route{{Provider: p.ID, Model: "m1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Chat(context.Background(), ChatRequest{
+		ConversationID: "c-1a2b3c4d",
+		Messages:       []ChatMessage{{Role: "user", Content: "hi"}},
+	}, "agent"); err != nil {
+		t.Fatal(err)
+	}
+	records, err := svc.usage.Recent(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("usage = %d records, want 1", len(records))
+	}
+	if records[0].Origin != "agent" || records[0].ConversationID != "c-1a2b3c4d" {
+		t.Errorf("record = %+v", records[0])
 	}
 }
 

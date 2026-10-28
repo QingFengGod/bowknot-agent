@@ -80,6 +80,16 @@ func GatewayDir() (string, error) {
 	return gatewayDir(dir), nil
 }
 
+// AgentDir returns the directory holding assistant conversations in DataDir.
+// It does not create the directory.
+func AgentDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return agentDir(dir), nil
+}
+
 func dataDir(home string) string {
 	return filepath.Join(home, DataDirName)
 }
@@ -102,4 +112,8 @@ func registryPath(dir string) string {
 
 func gatewayDir(dir string) string {
 	return filepath.Join(dir, "gateway")
+}
+
+func agentDir(dir string) string {
+	return filepath.Join(dir, "agent")
 }

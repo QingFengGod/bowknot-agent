@@ -172,6 +172,11 @@ func (s *Service) RouteTargets(cap Capability) []TargetView {
 	return routeViews(cfg, cap)
 }
 
+// ChatTargets returns the chat route targets, for the assistant's model picker.
+func (s *Service) ChatTargets() []TargetView {
+	return s.RouteTargets(CapabilityChat)
+}
+
 // SaveProvider creates or updates a provider. An empty ID creates one; an
 // empty key keeps the stored key.
 func (s *Service) SaveProvider(p Provider, key string) (Provider, error) {
@@ -368,18 +373,17 @@ func (s *Service) TestProvider(ctx context.Context, id string) (TestResult, erro
 
 	s.mu.Lock()
 	next := s.cfg.Clone()
-	j, exists := next.ProviderByID(id)
-	if exists {
+	var saveErr error
+	if j, exists := next.ProviderByID(id); exists {
 		next.Providers[j].LastTest = &result
 		if result.OK && len(next.Providers[j].Models) == 0 {
 			next.Providers[j].Models = modelsFromIDs(models)
 			fillDefaultRoutes(next)
 		}
 		next.Normalize()
-		if saveErr := SaveConfig(s.config, next); saveErr != nil {
-			s.mu.Unlock()
-			return result, saveErr
-		}
+		// The in-memory config follows the test even when persisting fails,
+		// so this session can keep using a working provider.
+		saveErr = SaveConfig(s.config, next)
 		s.cfg = next
 	}
 	s.live = &callStatus{ok: result.OK, message: result.Message, at: time.Unix(result.At, 0)}
@@ -389,12 +393,29 @@ func (s *Service) TestProvider(ctx context.Context, id string) (TestResult, erro
 	if cb != nil {
 		cb(snap)
 	}
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	return result, saveErr
 }
 
-// Chat calls the primary chat target and falls back in route order.
+// Chat calls the primary chat target and falls back in route order. A pinned
+// provider and model call only that target, with no fallback.
 func (s *Service) Chat(ctx context.Context, req ChatRequest, origin string) (ChatResponse, error) {
 	targets := s.targets(CapabilityChat)
+	if req.Model != "" {
+		pinned := make([]Target, 0, 1)
+		for _, t := range targets {
+			if t.Model != req.Model || (req.ProviderID != "" && t.Provider.ID != req.ProviderID) {
+				continue
+			}
+			pinned = append(pinned, t)
+		}
+		if len(pinned) == 0 {
+			return ChatResponse{}, internalError("所选模型不在对话路由中，请重新选择", nil)
+		}
+		targets = pinned
+	}
 	if len(targets) == 0 {
 		return ChatResponse{}, internalError("模型未配置，请先在设置中配置对话模型", nil)
 	}
@@ -406,13 +427,13 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, origin string) (Cha
 		if model == "" {
 			model = t.Model
 		}
-		s.recordUsage(origin, t, model, resp.InputTokens, resp.OutputTokens, resp.HasUsage, time.Since(start), err)
+		s.recordUsage(origin, req.ConversationID, t, model, resp.InputTokens, resp.OutputTokens, resp.HasUsage, time.Since(start), err)
 		if err == nil {
 			s.setLiveOutcome(nil)
 			return resp, nil
 		}
 		lastErr = err
-		if !FallbackAllowed(err) {
+		if !FallbackAllowed(err) || req.Model != "" {
 			s.setLiveOutcome(err)
 			return ChatResponse{}, err
 		}
@@ -446,7 +467,7 @@ func (s *Service) ChatProvider(ctx context.Context, providerID, model string, re
 	if actual == "" {
 		actual = model
 	}
-	s.recordUsage(origin, t, actual, resp.InputTokens, resp.OutputTokens, resp.HasUsage, time.Since(start), err)
+	s.recordUsage(origin, req.ConversationID, t, actual, resp.InputTokens, resp.OutputTokens, resp.HasUsage, time.Since(start), err)
 	s.setLiveOutcome(err)
 	if err != nil {
 		return ChatResponse{}, err
@@ -468,7 +489,7 @@ func (s *Service) Embed(ctx context.Context, req EmbedRequest, origin string) (E
 		if model == "" {
 			model = t.Model
 		}
-		s.recordUsage(origin, t, model, resp.InputTokens, 0, resp.HasUsage, time.Since(start), err)
+		s.recordUsage(origin, "", t, model, resp.InputTokens, 0, resp.HasUsage, time.Since(start), err)
 		if err == nil {
 			return resp, nil
 		}
@@ -568,10 +589,11 @@ func (s *Service) acquire(ctx context.Context, providerID string) (func(), error
 	}
 }
 
-func (s *Service) recordUsage(origin string, t Target, model string, inputTokens, outputTokens int, hasUsage bool, duration time.Duration, err error) {
+func (s *Service) recordUsage(origin, conversationID string, t Target, model string, inputTokens, outputTokens int, hasUsage bool, duration time.Duration, err error) {
 	rec := UsageRecord{
 		Time:           s.now().Unix(),
 		Origin:         origin,
+		ConversationID: conversationID,
 		ProviderID:     t.Provider.ID,
 		ProviderName:   t.Provider.Name,
 		Model:          model,
@@ -635,8 +657,11 @@ func computeSnapshot(cfg *Config, live *callStatus, now time.Time) Snapshot {
 		return Snapshot{State: StateNotConfigured, UpdatedAt: now}
 	}
 
-	ok := false
-	reason := "尚未连接测试"
+	// A configured provider that was never tested is treated as usable: the
+	// assistant must not be blocked before the first call. Only a failed test
+	// or a failed call marks the gateway offline.
+	ok := true
+	reason := "尚未连接测试，可以直接使用"
 	at := time.Time{}
 	if candidate.LastTest != nil {
 		ok = candidate.LastTest.OK

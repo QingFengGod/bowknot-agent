@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo"
 	mygoui "github.com/egoist/mygo/ui"
 
+	"github.com/QingFengGod/bowknot-agent/internal/agent"
 	"github.com/QingFengGod/bowknot-agent/internal/capability"
 	"github.com/QingFengGod/bowknot-agent/internal/gateway"
 	"github.com/QingFengGod/bowknot-agent/internal/platform"
@@ -50,6 +51,7 @@ type App struct {
 	capabilities *capability.Service
 	gateway      *gateway.Service
 	settingsPage *settingspage.Page
+	agentPage    *agent.Page
 	// quitting is set before the windows close for a quit, so that the close
 	// handler lets the window go instead of hiding it to the tray.
 	quitting bool
@@ -76,8 +78,11 @@ func New() *App {
 	a.setUpStore()
 	// 006 装配网关与设置模块：侧栏状态由网关快照注入。
 	a.setUpGateway()
+	// 007 装配助手模块：会话本地持久化，对话走网关。
+	a.setUpAgent()
 	a.shell.Pages = map[shell.ModuleID]shell.Page{
 		shell.ModuleStore:    a.page,
+		shell.ModuleAgent:    a.agentPage,
 		shell.ModuleSettings: a.settingsPage,
 	}
 	return a
@@ -177,6 +182,10 @@ func (a *App) Run() error {
 	// this close is the real exit rather than a request to hide.
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
 		a.quitting = true
+		// 007: cancel a running reply and persist what streamed before exit.
+		if a.agentPage != nil {
+			a.agentPage.Runner.Shutdown()
+		}
 		if a.host != nil {
 			a.host.CloseAll()
 		}

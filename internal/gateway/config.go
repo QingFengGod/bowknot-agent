@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -24,6 +26,13 @@ const MaxModels = 100
 
 // MaxModelTokens bounds the context window and max output of a model.
 const MaxModelTokens = 10_000_000
+
+// Retry settings of an atomic config replacement. Windows denies a rename
+// while an editor or a scanner briefly holds the target.
+const (
+	configRenameAttempts = 3
+	configRenameDelay    = 40 * time.Millisecond
+)
 
 // ProviderOpenAI is the only provider type of this build.
 const ProviderOpenAI = "openai"
@@ -373,6 +382,17 @@ func LoadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// ensureWritable clears the read-only attribute of an existing config, which
+// a copied, extracted or version-controlled file can carry on Windows. A
+// failure is left to the write step, which reports the real error.
+func ensureWritable(path string) {
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm()&0o200 != 0 {
+		return
+	}
+	_ = os.Chmod(path, 0o600)
+}
+
 // SaveConfig writes cfg to path through a temporary file, so that a failed
 // write never replaces a good config.
 func SaveConfig(path string, cfg *Config) error {
@@ -386,15 +406,32 @@ func SaveConfig(path string, cfg *Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("gateway: create config directory: %w", err)
 	}
+	ensureWritable(path)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("gateway: write config: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		if retry := os.Rename(tmp, path); retry != nil {
-			_ = os.Remove(tmp)
-			return fmt.Errorf("gateway: replace config: %w", retry)
+	var renameErr error
+	for attempt := 0; attempt < configRenameAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(configRenameDelay)
+		}
+		if err := os.Rename(tmp, path); err == nil {
+			return nil
+		} else {
+			renameErr = err
 		}
 	}
-	return nil
+	// An editor or a virus scanner may read the file without letting it be
+	// replaced. Writing in place keeps saving usable when that write is
+	// allowed; the temporary file is only a fallback for the common case.
+	if err := os.WriteFile(path, data, 0o600); err == nil {
+		_ = os.Remove(tmp)
+		return nil
+	}
+	_ = os.Remove(tmp)
+	if errors.Is(renameErr, fs.ErrPermission) {
+		return fmt.Errorf("gateway: replace config: %w；文件可能被其他程序占用（例如在编辑器中打开 providers.json），关闭后重试", renameErr)
+	}
+	return fmt.Errorf("gateway: replace config: %w", renameErr)
 }

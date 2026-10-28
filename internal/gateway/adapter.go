@@ -12,14 +12,18 @@ type ChatMessage struct {
 }
 
 // ChatRequest is a chat completion request. Model is filled by the router;
-// OnDelta receives streamed content when Stream is set.
+// OnDelta receives streamed content when Stream is set. ConversationID is an
+// optional local hint written to the usage log. ProviderID and Model, when
+// set, pin the call to one route target instead of trying the route in order.
 type ChatRequest struct {
-	Model       string
-	Messages    []ChatMessage
-	MaxTokens   int
-	Temperature *float64
-	Stream      bool
-	OnDelta     func(string)
+	ProviderID     string
+	Model          string
+	ConversationID string
+	Messages       []ChatMessage
+	MaxTokens      int
+	Temperature    *float64
+	Stream         bool
+	OnDelta        func(string)
 }
 
 // ChatResponse is a completed chat call.

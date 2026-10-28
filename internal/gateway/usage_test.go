@@ -36,6 +36,39 @@ func TestUsageAppendRecentCount(t *testing.T) {
 	}
 }
 
+func TestUsageRecordsConversationID(t *testing.T) {
+	log := NewUsageLog(t.TempDir())
+	if err := log.Append(UsageRecord{Time: 1, Origin: "agent", ConversationID: "c-1a2b3c4d",
+		Capability: CapabilityChat, Status: UsageOK}); err != nil {
+		t.Fatal(err)
+	}
+	// A record written before 007 has no conversation_id and must still read.
+	legacy := fmt.Sprintf("{\"time\":2,\"origin\":\"settings\",\"status\":\"ok\"}\n")
+	f, err := os.OpenFile(log.Path(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recent, err := log.Recent(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 2 {
+		t.Fatalf("recent = %d, want 2", len(recent))
+	}
+	if recent[0].ConversationID != "" {
+		t.Errorf("legacy conversation = %q, want empty", recent[0].ConversationID)
+	}
+	if recent[1].ConversationID != "c-1a2b3c4d" {
+		t.Errorf("conversation = %q", recent[1].ConversationID)
+	}
+}
+
 func TestUsageRotatesAndPrunes(t *testing.T) {
 	dir := t.TempDir()
 	log := NewUsageLog(dir)

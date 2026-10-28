@@ -197,6 +197,52 @@ func TestConfigLoadAndSave(t *testing.T) {
 	}
 }
 
+func TestSaveConfigOverwritesExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ProvidersFileName)
+	first := NewConfig()
+	first.Providers = []Provider{{ID: "p-00000001", Name: "First", Type: ProviderOpenAI,
+		BaseURL: "https://a.example/v1", Enabled: true, Models: []Model{{ID: "m1"}}}}
+	if err := SaveConfig(path, first); err != nil {
+		t.Fatal(err)
+	}
+	second := first.Clone()
+	second.Providers[0].Name = "Second"
+	if err := SaveConfig(path, second); err != nil {
+		t.Fatalf("second save = %v", err)
+	}
+	loaded, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Providers) != 1 || loaded.Providers[0].Name != "Second" {
+		t.Errorf("loaded = %+v, want the second config", loaded.Providers)
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("temporary file left behind: %v", err)
+	}
+}
+
+func TestSaveConfigReadOnlyDirectory(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, ProvidersFileName)
+	if err := os.WriteFile(path, []byte("{}"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveConfig(path, NewConfig()); err != nil {
+		t.Fatalf("save over a read-only file = %v, want success", err)
+	}
+	loaded, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Providers) != 0 {
+		t.Errorf("loaded = %+v", loaded.Providers)
+	}
+}
+
 func TestConfigLoadRejectsOldSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ProvidersFileName)
 	raw := `{"schema":1,"providers":[{"id":"p-00000001","name":"Old",
