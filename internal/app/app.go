@@ -11,6 +11,7 @@ import (
 	"github.com/QingFengGod/bowknot-agent/internal/capability"
 	"github.com/QingFengGod/bowknot-agent/internal/gateway"
 	"github.com/QingFengGod/bowknot-agent/internal/platform"
+	pluginpage "github.com/QingFengGod/bowknot-agent/internal/plugin"
 	settingspage "github.com/QingFengGod/bowknot-agent/internal/settings"
 	"github.com/QingFengGod/bowknot-agent/internal/shell"
 	"github.com/QingFengGod/bowknot-agent/internal/store"
@@ -55,6 +56,11 @@ type App struct {
 	assistantPage *agent.Page
 	agentPage     *agent.AgentPage
 	taskPage      *task.Page
+	// agents is the agent registry shared by the assistant, the agent page
+	// and the plugin skill injection.
+	agents      *agent.Registry
+	pluginStore *pluginpage.Store
+	pluginPage  *pluginpage.Page
 	// quitting is set before the windows close for a quit, so that the close
 	// handler lets the window go instead of hiding it to the tray.
 	quitting bool
@@ -84,10 +90,13 @@ func New() *App {
 	// 007 装配助手模块：会话本地持久化，对话走网关。
 	// 011 拆出独立的 Agent 管理页，两者共享会话与 Agent 工作区。
 	a.setUpAgent()
+	// 013 装配插件模块：本地导入、注册表与按 Agent 启用。
+	a.setUpPlugins()
 	a.shell.Pages = map[shell.ModuleID]shell.Page{
 		shell.ModuleStore:     a.page,
 		shell.ModuleAssistant: a.assistantPage,
 		shell.ModuleAgent:     a.agentPage,
+		shell.ModulePlugins:   a.pluginPage,
 		shell.ModuleTask:      a.taskPage,
 		shell.ModuleSettings:  a.settingsPage,
 	}
@@ -209,6 +218,9 @@ func (a *App) Run() error {
 		a.bindCapabilities()
 		if a.installer != nil {
 			a.installer.CleanStaging()
+		}
+		if a.pluginStore != nil {
+			a.pluginStore.CleanStaging()
 		}
 		a.applyTheme()
 		a.createWindow()

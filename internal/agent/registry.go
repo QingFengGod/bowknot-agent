@@ -148,6 +148,10 @@ type Registry struct {
 	root string
 	now  func() time.Time
 
+	// Skills supplies the plugin skill section of the system prompt. The app
+	// injects an adapter over the plugin store; nil disables the section.
+	Skills SkillProvider
+
 	mu     sync.Mutex
 	agents map[string]Agent
 

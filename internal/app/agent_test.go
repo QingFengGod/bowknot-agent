@@ -53,7 +53,7 @@ func TestNewAgentPagesSelectsRecentConversation(t *testing.T) {
 		}
 	}
 
-	page, agentPage := newAgentPages(stubChatter{snap: gateway.Snapshot{State: gateway.StateOnline, Model: "m1"}}, dir, "")
+	page, agentPage, _ := newAgentPages(stubChatter{snap: gateway.Snapshot{State: gateway.StateOnline, Model: "m1"}}, dir, "")
 	if page.CurrentID != newer.ID {
 		t.Errorf("current = %q, want the most recent conversation %q", page.CurrentID, newer.ID)
 	}
@@ -70,7 +70,7 @@ func TestNewAgentPagesSelectsRecentConversation(t *testing.T) {
 }
 
 func TestNewAgentPagesWithoutData(t *testing.T) {
-	page, agentPage := newAgentPages(stubChatter{}, "", "")
+	page, agentPage, _ := newAgentPages(stubChatter{}, "", "")
 	if page.CurrentID != "" {
 		t.Errorf("current = %q, want empty", page.CurrentID)
 	}
@@ -84,7 +84,7 @@ func TestNewAgentPagesWithoutData(t *testing.T) {
 
 func TestOpenConversationSwitchesModule(t *testing.T) {
 	dir := t.TempDir()
-	page, agentPage := newAgentPages(stubChatter{snap: gateway.Snapshot{State: gateway.StateOnline, Model: "m1"}}, dir, "")
+	page, agentPage, _ := newAgentPages(stubChatter{snap: gateway.Snapshot{State: gateway.StateOnline, Model: "m1"}}, dir, "")
 	a, err := agentPage.Agents.Create(agent.Agent{Name: "短剧", Enabled: true,
 		ProviderID: "p-00000001", Model: "m1"})
 	if err != nil {

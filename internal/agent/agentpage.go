@@ -223,9 +223,12 @@ func (p *AgentPage) Send() {
 		return
 	}
 	query := strings.TrimSpace(p.Input)
-	providerID, model, persona, ok := p.agentTarget(query)
+	providerID, model, persona, notice, ok := p.agentTarget(query)
 	if !ok {
 		return
+	}
+	if notice != "" {
+		p.ActionError = notice
 	}
 	convID := p.CurrentID
 	if convID == "" {
@@ -262,9 +265,12 @@ func (p *AgentPage) Regenerate() {
 		return
 	}
 	query := lastUserContent(conv)
-	providerID, model, persona, ok := p.agentTarget(query)
+	providerID, model, persona, notice, ok := p.agentTarget(query)
 	if !ok {
 		return
+	}
+	if notice != "" {
+		p.ActionError = notice
 	}
 	if err := p.Runner.RegenerateWith(context.Background(), p.CurrentID, providerID, model, persona); err != nil {
 		p.ActionError = err.Error()
@@ -273,14 +279,14 @@ func (p *AgentPage) Regenerate() {
 }
 
 // agentTarget returns the route target and prompt of the open sub agent,
-// including the memory section retrieved for this message.
-func (p *AgentPage) agentTarget(query string) (providerID, model, persona string, ok bool) {
+// including the memory and plugin skill sections for this message.
+func (p *AgentPage) agentTarget(query string) (providerID, model, persona, notice string, ok bool) {
 	a, found := p.Agents.Get(p.CurrentAgent)
 	if !found || !a.Enabled || !targetAvailable(p.chatTargets(), a.ProviderID, a.Model) {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
-	return a.ProviderID, a.Model,
-		agentMemoryPrompt(p.Agents, p.Chatter, a.ID, a.ProviderID, a.Model, query), true
+	persona, notice = agentMemoryPrompt(p.Agents, p.Chatter, a.ID, a.ProviderID, a.Model, query)
+	return a.ProviderID, a.Model, persona, notice, true
 }
 
 // Blocker explains why the input is disabled, or returns "" when it works.

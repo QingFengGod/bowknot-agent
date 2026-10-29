@@ -75,12 +75,14 @@ func memoryEmbed(chatter Chatter) memory.EmbedFunc {
 }
 
 // agentMemoryPrompt runs the date check and assembles the system prompt of one
-// agent: the workspace text first, then the memory section. Pending summaries
-// are generated in the background so a reply never waits for them.
-func agentMemoryPrompt(agents *Registry, chatter Chatter, agentID, providerID, model, query string) string {
-	prompt := agentPrompt(agents, agentID)
+// agent: the workspace text first, then the memory section, then the skill
+// section of the enabled plugins. Pending summaries are generated in the
+// background so a reply never waits for them. The notice reports plugins that
+// failed injection and were removed from the enable list.
+func agentMemoryPrompt(agents *Registry, chatter Chatter, agentID, providerID, model, query string) (prompt, notice string) {
+	prompt = agentPrompt(agents, agentID)
 	if agents == nil {
-		return prompt
+		return prompt, ""
 	}
 	mem := agents.Memory(agentID)
 	mem.SetEmbed(memoryEmbed(chatter))
@@ -99,7 +101,14 @@ func agentMemoryPrompt(agents *Registry, chatter Chatter, agentID, providerID, m
 	if section := mem.Context(query, memoryBudgetRunes); section != "" {
 		prompt += "\n\n" + section
 	}
-	return prompt
+	if agents.Skills != nil {
+		skills, skillNotice := agents.Skills.SkillSection(agentID)
+		if skills != "" {
+			prompt += "\n\n" + skills
+		}
+		notice = skillNotice
+	}
+	return prompt, notice
 }
 
 // summarizeMemory generates the pending summaries off the UI thread.

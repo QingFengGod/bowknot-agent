@@ -142,9 +142,12 @@ func (p *Page) Send() {
 		return
 	}
 	query := strings.TrimSpace(p.Input)
-	providerID, model, persona, ok := p.agentTarget(query)
+	providerID, model, persona, notice, ok := p.agentTarget(query)
 	if !ok {
 		return
+	}
+	if notice != "" {
+		p.ActionError = notice
 	}
 	convID := p.CurrentID
 	if convID == "" {
@@ -179,13 +182,14 @@ func (p *Page) Send() {
 }
 
 // agentTarget returns the route target and the system prompt of the main
-// agent, including the memory section retrieved for this message.
-func (p *Page) agentTarget(query string) (providerID, model, persona string, ok bool) {
+// agent, including the memory and plugin skill sections for this message.
+func (p *Page) agentTarget(query string) (providerID, model, persona, notice string, ok bool) {
 	providerID, model = p.Runner.Target()
 	if providerID == "" || model == "" {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
-	return providerID, model, agentMemoryPrompt(p.Agents, p.Chatter, MainAgentID, providerID, model, query), true
+	persona, notice = agentMemoryPrompt(p.Agents, p.Chatter, MainAgentID, providerID, model, query)
+	return providerID, model, persona, notice, true
 }
 
 // NewConversation creates an empty main agent conversation and selects it. A
@@ -246,9 +250,12 @@ func (p *Page) Regenerate() {
 		return
 	}
 	query := lastUserContent(conv)
-	providerID, model, persona, ok := p.agentTarget(query)
+	providerID, model, persona, notice, ok := p.agentTarget(query)
 	if !ok {
 		return
+	}
+	if notice != "" {
+		p.ActionError = notice
 	}
 	if err := p.Runner.RegenerateWith(context.Background(), p.CurrentID, providerID, model, persona); err != nil {
 		p.ActionError = err.Error()

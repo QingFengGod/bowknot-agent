@@ -18,6 +18,7 @@ var (
 	TaskIcon      = mustIcon("task.svg")
 	CreationIcon  = mustIcon("creation.svg")
 	SettingsIcon  = mustIcon("settings.svg")
+	PluginIcon    = mustIcon("plugin.svg")
 	SunIcon       = mustIcon("sun.svg")
 	MoonIcon      = mustIcon("moon.svg")
 	AutoIcon      = mustIcon("auto.svg")

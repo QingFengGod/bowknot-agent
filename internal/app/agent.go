@@ -15,7 +15,8 @@ import (
 // workspace root, conversation store, task store and runner.
 func (a *App) setUpAgent() {
 	agentsDir, taskDir := agentPaths()
-	assistant, agentPage := newAgentPages(a.gateway, agentsDir, taskDir)
+	assistant, agentPage, agents := newAgentPages(a.gateway, agentsDir, taskDir)
+	a.agents = agents
 	assistant.Repaint = a.invalidateMain
 	assistant.Dispatch = func(fn func()) { mygo.RunOnMain(fn) }
 	agentPage.Repaint = a.invalidateMain
@@ -109,8 +110,9 @@ func agentPaths() (agentsDir, taskDir string) {
 }
 
 // newAgentPages opens the conversations, the agent workspaces and the tasks in
-// the given paths, then selects the most recent main agent conversation.
-func newAgentPages(chatter agent.Chatter, agentsDir, taskDir string) (*agent.Page, *agent.AgentPage) {
+// the given paths, then selects the most recent main agent conversation. It
+// also returns the agent registry for the plugin module.
+func newAgentPages(chatter agent.Chatter, agentsDir, taskDir string) (*agent.Page, *agent.AgentPage, *agent.Registry) {
 	store := agent.NewStore(agentsDir)
 	if err := store.Load(); err != nil {
 		log.Printf("app: load conversations: %v", err)
@@ -128,5 +130,5 @@ func newAgentPages(chatter agent.Chatter, agentsDir, taskDir string) (*agent.Pag
 	agentPage := agent.NewAgentPage(chatter, store, tasks, agents, assistant.Runner)
 	agentPage.Dispatcher = assistant.Dispatcher
 	agentPage.SelectAgent("")
-	return assistant, agentPage
+	return assistant, agentPage, agents
 }

@@ -15,6 +15,7 @@ const (
 	ModuleStore     ModuleID = "store"
 	ModuleAssistant ModuleID = "assistant"
 	ModuleAgent     ModuleID = "agent"
+	ModulePlugins   ModuleID = "plugins"
 	ModuleTask      ModuleID = "task"
 	ModuleCreation  ModuleID = "creation"
 	ModuleSettings  ModuleID = "settings"
@@ -33,6 +34,7 @@ var Modules = []Module{
 	{ModuleStore, "应用", "已安装应用与商店", ui.StoreIcon},
 	{ModuleAssistant, "助手", "与主 Agent 对话并派发任务", ui.AssistantIcon},
 	{ModuleAgent, "Agent", "主 Agent 与子 Agent 管理", ui.AgentIcon},
+	{ModulePlugins, "插件", "插件导入、启用与卸载", ui.PluginIcon},
 	{ModuleTask, "任务", "任务计划、运行与结果", ui.TaskIcon},
 	{ModuleCreation, "创作", "图片、视频与语音创作", ui.CreationIcon},
 	{ModuleSettings, "设置", "应用、网关与数据设置", ui.SettingsIcon},
