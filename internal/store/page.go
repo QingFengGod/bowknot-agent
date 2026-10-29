@@ -254,17 +254,26 @@ func (p *Page) installButton(c *mygoui.Context, t *mygoui.Theme, label string, d
 }
 
 // installFromPicker asks for a .bkapp package or a local folder and starts
-// the install.
+// the install. The picker blocks until dismissed, so it runs on a worker
+// goroutine: a dialog opened inside the click handling never shows on macOS,
+// because the main thread is busy waiting for the dialog callback that the
+// same wait was supposed to deliver. The outcome is applied on the main
+// thread.
 func (p *Page) installFromPicker(directory bool) {
-	path, err := pickInstallSource(directory)
-	if err != nil {
-		p.notice = "打开选择器失败：" + err.Error()
-		return
-	}
-	if path == "" {
-		return
-	}
-	p.startInstall(InstallRequest{Path: path, Directory: directory})
+	go func() {
+		path, err := pickInstallSource(directory)
+		mygo.RunOnMain(func() {
+			if err != nil {
+				p.notice = "打开选择器失败：" + err.Error()
+				p.repaint()
+				return
+			}
+			if path == "" {
+				return
+			}
+			p.startInstall(InstallRequest{Path: path, Directory: directory})
+		})
+	}()
 }
 
 func pickInstallSource(directory bool) (string, error) {
@@ -470,57 +479,74 @@ func (p *Page) runInstall(ctx context.Context, req InstallRequest) (AppInfo, err
 
 // uninstallApp confirms, closes the app window, asks about its data and
 // removes the app.
+// uninstallApp confirms, closes the app window, asks about its data and
+// removes the app. The dialogs block until dismissed, so the whole flow runs
+// on a worker goroutine and applies the outcome on the main thread; see
+// installFromPicker for why.
 func (p *Page) uninstallApp(app AppInfo) {
 	if p.Installer == nil {
 		return
 	}
-	confirm, err := mygo.Dialog.Message(mygo.MessageOptions{
-		Type:          mygo.MessageWarning,
-		Title:         "卸载应用",
-		Message:       "确定卸载 " + app.Name + "？",
-		Detail:        "应用文件会被删除。",
-		Buttons:       []string{"取消", "卸载"},
-		DefaultButton: 1,
-		CancelButton:  0,
-	})
-	if err != nil || confirm.Button != 1 {
-		return
-	}
-	if p.Host != nil && p.Host.IsOpen(app.ID) {
-		p.Host.Close(app.ID)
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_ = p.Host.WaitClosed(ctx, app.ID)
-		cancel()
-	}
-	choice, err := mygo.Dialog.Message(mygo.MessageOptions{
-		Type:          mygo.MessageQuestion,
-		Title:         "应用数据",
-		Message:       "要一并删除 " + app.Name + " 的私有数据吗？",
-		Detail:        "保留数据会在重装后继续可用。",
-		Buttons:       []string{"取消", "保留数据", "删除数据"},
-		DefaultButton: 1,
-		CancelButton:  0,
-	})
-	if err != nil || choice.Button == 0 {
-		return
-	}
-	if err := p.Installer.Uninstall(context.Background(), app.ID, choice.Button == 2); err != nil {
-		p.notice = "卸载失败：" + err.Error()
-		p.showMessage("卸载失败", err.Error())
-		p.repaint()
-		return
-	}
-	p.notice = "已卸载 " + app.Name
-	p.repaint()
+	go func() {
+		confirm, err := mygo.Dialog.Message(mygo.MessageOptions{
+			Type:          mygo.MessageWarning,
+			Title:         "卸载应用",
+			Message:       "确定卸载 " + app.Name + "？",
+			Detail:        "应用文件会被删除。",
+			Buttons:       []string{"取消", "卸载"},
+			DefaultButton: 1,
+			CancelButton:  0,
+		})
+		if err != nil || confirm.Button != 1 {
+			return
+		}
+		if p.Host != nil && p.Host.IsOpen(app.ID) {
+			p.Host.Close(app.ID)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = p.Host.WaitClosed(ctx, app.ID)
+			cancel()
+		}
+		choice, err := mygo.Dialog.Message(mygo.MessageOptions{
+			Type:          mygo.MessageQuestion,
+			Title:         "应用数据",
+			Message:       "要一并删除 " + app.Name + " 的私有数据吗？",
+			Detail:        "保留数据会在重装后继续可用。",
+			Buttons:       []string{"取消", "保留数据", "删除数据"},
+			DefaultButton: 1,
+			CancelButton:  0,
+		})
+		var uninstallErr error
+		if err == nil && choice.Button != 0 {
+			if err := p.Installer.Uninstall(context.Background(), app.ID, choice.Button == 2); err != nil {
+				uninstallErr = err
+			}
+		}
+		mygo.RunOnMain(func() {
+			switch {
+			case uninstallErr != nil:
+				p.notice = "卸载失败：" + uninstallErr.Error()
+				go p.showMessage("卸载失败", uninstallErr.Error())
+			case err == nil && choice.Button != 0:
+				p.notice = "已卸载 " + app.Name
+			default:
+				return
+			}
+			p.repaint()
+		})
+	}()
 }
 
+// showMessage shows an error dialog on a worker goroutine, so it is safe to
+// call from the main thread (see installFromPicker).
 func (p *Page) showMessage(title, message string) {
-	_, _ = mygo.Dialog.Message(mygo.MessageOptions{
-		Type:    mygo.MessageError,
-		Title:   title,
-		Message: message,
-		Buttons: []string{"知道了"},
-	})
+	go func() {
+		_, _ = mygo.Dialog.Message(mygo.MessageOptions{
+			Type:    mygo.MessageError,
+			Title:   title,
+			Message: message,
+			Buttons: []string{"知道了"},
+		})
+	}()
 }
 
 func (p *Page) repaint() {

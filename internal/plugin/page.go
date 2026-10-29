@@ -289,18 +289,29 @@ func (p *Page) TogglePlugin(agentID, pluginID string, enable bool) {
 }
 
 // importFromPicker asks for a .bkplugin package or a plugin directory and
-// validates it into the pending import.
+// validates it into the pending import. The picker blocks until dismissed, so
+// it runs on a worker goroutine: a dialog opened inside the click handling
+// never shows on macOS, because the main thread is busy waiting for the
+// dialog callback that the same wait was supposed to deliver. The outcome is
+// applied on the main thread.
 func (p *Page) importFromPicker(directory bool) {
-	path, err := pickImportSource(directory)
-	if err != nil {
-		p.Error = "打开选择器失败：" + err.Error()
-		p.repaint()
-		return
-	}
-	if path == "" {
-		return
-	}
-	p.beginImport(path, directory)
+	go func() {
+		path, err := pickImportSource(directory)
+		if err != nil {
+			mygo.RunOnMain(func() {
+				p.Error = "打开选择器失败：" + err.Error()
+				p.repaint()
+			})
+			return
+		}
+		if path == "" {
+			return
+		}
+		manifest, inspectErr := p.Store.Inspect(path, directory)
+		mygo.RunOnMain(func() {
+			p.showImportConfirmation(path, directory, manifest, inspectErr)
+		})
+	}()
 }
 
 func pickImportSource(directory bool) (string, error) {
@@ -323,10 +334,17 @@ func pickImportSource(directory bool) (string, error) {
 	return paths[0], nil
 }
 
-// beginImport validates the source and opens the confirmation. A downgrade of
-// an installed plugin is rejected here with the reason (FR-PLG-11).
+// beginImport validates the source and opens the confirmation synchronously;
+// tests use it. The picker flow lands in showImportConfirmation.
 func (p *Page) beginImport(path string, directory bool) {
 	manifest, err := p.Store.Inspect(path, directory)
+	p.showImportConfirmation(path, directory, manifest, err)
+}
+
+// showImportConfirmation opens the confirmation for a validated source. A
+// downgrade of an installed plugin is rejected here with the reason
+// (FR-PLG-11). It runs on the main thread.
+func (p *Page) showImportConfirmation(path string, directory bool, manifest *Manifest, err error) {
 	if err != nil {
 		p.Error = err.Error()
 		p.repaint()
