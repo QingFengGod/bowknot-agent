@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/QingFengGod/bowknot-agent/internal/memory"
 )
 
 // Agent metadata layout and limits. The schema must be bumped when the agent
@@ -148,15 +150,19 @@ type Registry struct {
 
 	mu     sync.Mutex
 	agents map[string]Agent
+
+	memMu    sync.Mutex
+	memories map[string]*memory.Store
 }
 
 // NewRegistry returns a registry over root. An empty root keeps the agents in
 // memory only, which the tests use.
 func NewRegistry(root string) *Registry {
 	return &Registry{
-		root:   root,
-		now:    time.Now,
-		agents: map[string]Agent{},
+		root:     root,
+		now:      time.Now,
+		agents:   map[string]Agent{},
+		memories: map[string]*memory.Store{},
 	}
 }
 
@@ -326,6 +332,24 @@ func (r *Registry) Workspace(id string) *Workspace {
 	return NewWorkspace(r.root, id)
 }
 
+// Memory returns the long term memory of one agent. The store is created once
+// per agent and kept for this run; an in-memory registry gets an inert store,
+// which the tests use.
+func (r *Registry) Memory(id string) *memory.Store {
+	r.memMu.Lock()
+	defer r.memMu.Unlock()
+	if store, ok := r.memories[id]; ok {
+		return store
+	}
+	dir := ""
+	if r.root != "" {
+		dir = NewWorkspace(r.root, id).MemoriesDir()
+	}
+	store := memory.NewStore(dir)
+	r.memories[id] = store
+	return store
+}
+
 // Count returns how many sub agents are defined.
 func (r *Registry) Count() int {
 	r.mu.Lock()
@@ -447,6 +471,9 @@ func (r *Registry) Delete(id string) error {
 		return ErrAgentNotFound
 	}
 	delete(r.agents, id)
+	r.memMu.Lock()
+	delete(r.memories, id)
+	r.memMu.Unlock()
 	if r.root == "" {
 		return nil
 	}

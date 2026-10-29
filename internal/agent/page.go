@@ -141,7 +141,8 @@ func (p *Page) Send() {
 	if taskMode && p.dispatchBlocker() != "" {
 		return
 	}
-	providerID, model, persona, ok := p.agentTarget()
+	query := strings.TrimSpace(p.Input)
+	providerID, model, persona, ok := p.agentTarget(query)
 	if !ok {
 		return
 	}
@@ -178,13 +179,13 @@ func (p *Page) Send() {
 }
 
 // agentTarget returns the route target and the system prompt of the main
-// agent.
-func (p *Page) agentTarget() (providerID, model, persona string, ok bool) {
+// agent, including the memory section retrieved for this message.
+func (p *Page) agentTarget(query string) (providerID, model, persona string, ok bool) {
 	providerID, model = p.Runner.Target()
 	if providerID == "" || model == "" {
 		return "", "", "", false
 	}
-	return providerID, model, agentPrompt(p.Agents, MainAgentID), true
+	return providerID, model, agentMemoryPrompt(p.Agents, p.Chatter, MainAgentID, providerID, model, query), true
 }
 
 // NewConversation creates an empty main agent conversation and selects it. A
@@ -240,7 +241,12 @@ func (p *Page) Regenerate() {
 	if p.CurrentID == "" {
 		return
 	}
-	providerID, model, persona, ok := p.agentTarget()
+	conv, ok := p.Store.Get(p.CurrentID)
+	if !ok {
+		return
+	}
+	query := lastUserContent(conv)
+	providerID, model, persona, ok := p.agentTarget(query)
 	if !ok {
 		return
 	}

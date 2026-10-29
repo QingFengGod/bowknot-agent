@@ -19,6 +19,10 @@ func (s stubChatter) Chat(context.Context, gateway.ChatRequest, string) (gateway
 	return gateway.ChatResponse{}, nil
 }
 
+func (s stubChatter) Embed(context.Context, gateway.EmbedRequest, string) (gateway.EmbedResponse, error) {
+	return gateway.EmbedResponse{}, nil
+}
+
 func (s stubChatter) Snapshot() gateway.Snapshot { return s.snap }
 
 func (s stubChatter) ChatTargets() []gateway.TargetView { return nil }

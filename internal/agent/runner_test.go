@@ -15,6 +15,8 @@ type fakeChatter struct {
 	snapshot gateway.Snapshot
 	targets  []gateway.TargetView
 	handler  func(ctx context.Context, req gateway.ChatRequest) (gateway.ChatResponse, error)
+	// embedHandler answers memory retrieval; the default reports no route.
+	embedHandler func(ctx context.Context, req gateway.EmbedRequest) (gateway.EmbedResponse, error)
 
 	mu     sync.Mutex
 	last   gateway.ChatRequest
@@ -44,6 +46,13 @@ func (f *fakeChatter) Chat(ctx context.Context, req gateway.ChatRequest, origin 
 		return gateway.ChatResponse{Content: "回复"}, nil
 	}
 	return f.handler(ctx, req)
+}
+
+func (f *fakeChatter) Embed(ctx context.Context, req gateway.EmbedRequest, origin string) (gateway.EmbedResponse, error) {
+	if f.embedHandler != nil {
+		return f.embedHandler(ctx, req)
+	}
+	return gateway.EmbedResponse{}, errors.New("没有向量路由")
 }
 
 func (f *fakeChatter) lastRequest() gateway.ChatRequest {

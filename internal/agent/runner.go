@@ -31,6 +31,7 @@ const deltaThrottle = 50 * time.Millisecond
 // Chatter is the part of the gateway the assistant uses.
 type Chatter interface {
 	Chat(ctx context.Context, req gateway.ChatRequest, origin string) (gateway.ChatResponse, error)
+	Embed(ctx context.Context, req gateway.EmbedRequest, origin string) (gateway.EmbedResponse, error)
 	Snapshot() gateway.Snapshot
 	ChatTargets() []gateway.TargetView
 }

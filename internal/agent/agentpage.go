@@ -10,6 +10,7 @@ import (
 	mygoui "github.com/egoist/mygo/ui"
 
 	"github.com/QingFengGod/bowknot-agent/internal/gateway"
+	"github.com/QingFengGod/bowknot-agent/internal/memory"
 	"github.com/QingFengGod/bowknot-agent/internal/task"
 	"github.com/QingFengGod/bowknot-agent/internal/ui"
 )
@@ -70,6 +71,25 @@ type AgentPage struct {
 	FormError string
 	// ConfirmDeleteID is the sub agent awaiting deletion confirmation.
 	ConfirmDeleteID string
+
+	// MemoryOpen shows the memory panel of the open sub agent.
+	MemoryOpen bool
+	// MemoryWeek is the week file being edited.
+	MemoryWeek string
+	// MemoryDraft is the editor text of MemoryWeek.
+	MemoryDraft string
+	// MemorySearch is the retrieval query.
+	MemorySearch string
+	// MemoryResults are the snippets of the last search.
+	MemoryResults []memory.Hit
+	// MemoryError is the last memory failure.
+	MemoryError string
+	// MemoryNotice reports the last memory action.
+	MemoryNotice string
+	// ConfirmMemoryClear awaits the confirmation of clearing every memory.
+	ConfirmMemoryClear bool
+	// ConfirmWeekDelete awaits the confirmation of deleting one week.
+	ConfirmWeekDelete string
 }
 
 // NewAgentPage creates the agent page over the shared stores and runner. The
@@ -110,6 +130,7 @@ func (p *AgentPage) View() func(c *mygoui.Context) {
 		}
 		p.agentFormModal(c, t)
 		p.deleteModal(c, t)
+		p.memoryModal(c, t)
 	}
 }
 
@@ -136,6 +157,7 @@ func (p *AgentPage) SelectAgent(id string) {
 		return
 	}
 	if p.CurrentAgent != id {
+		p.resetMemoryPanel()
 		p.CurrentAgent = id
 		p.CurrentID = ""
 		p.SelectRecent()
@@ -146,6 +168,7 @@ func (p *AgentPage) SelectAgent(id string) {
 
 // BackToList closes the detail view and returns to the card list.
 func (p *AgentPage) BackToList() {
+	p.resetMemoryPanel()
 	p.CurrentAgent = ""
 	p.CurrentID = ""
 	p.closeMenus()
@@ -199,7 +222,8 @@ func (p *AgentPage) Send() {
 	if p.Runner.Blocked() || p.Blocker() != "" || strings.TrimSpace(p.Input) == "" {
 		return
 	}
-	providerID, model, persona, ok := p.agentTarget()
+	query := strings.TrimSpace(p.Input)
+	providerID, model, persona, ok := p.agentTarget(query)
 	if !ok {
 		return
 	}
@@ -233,7 +257,12 @@ func (p *AgentPage) Regenerate() {
 	if p.CurrentID == "" {
 		return
 	}
-	providerID, model, persona, ok := p.agentTarget()
+	conv, ok := p.Store.Get(p.CurrentID)
+	if !ok {
+		return
+	}
+	query := lastUserContent(conv)
+	providerID, model, persona, ok := p.agentTarget(query)
 	if !ok {
 		return
 	}
@@ -243,13 +272,15 @@ func (p *AgentPage) Regenerate() {
 	p.repaint()
 }
 
-// agentTarget returns the route target and prompt of the open sub agent.
-func (p *AgentPage) agentTarget() (providerID, model, persona string, ok bool) {
+// agentTarget returns the route target and prompt of the open sub agent,
+// including the memory section retrieved for this message.
+func (p *AgentPage) agentTarget(query string) (providerID, model, persona string, ok bool) {
 	a, found := p.Agents.Get(p.CurrentAgent)
 	if !found || !a.Enabled || !targetAvailable(p.chatTargets(), a.ProviderID, a.Model) {
 		return "", "", "", false
 	}
-	return a.ProviderID, a.Model, agentPrompt(p.Agents, a.ID), true
+	return a.ProviderID, a.Model,
+		agentMemoryPrompt(p.Agents, p.Chatter, a.ID, a.ProviderID, a.Model, query), true
 }
 
 // Blocker explains why the input is disabled, or returns "" when it works.
@@ -421,6 +452,7 @@ func (p *AgentPage) headerRow(c *mygoui.Context, t *mygoui.Theme) {
 			mygoui.Text(c, title).FontSize(15).Bold().TextColor(t.Text).SingleLine()
 			mygoui.Text(c, p.agentSubtitle(a)).FontSize(10).TextColor(t.TextMuted).SingleLine()
 		})
+		drawButton(c, t, "记忆", false, false, p.OpenMemory)
 		drawButton(c, t, "编辑", false, false, func() { p.OpenAgentForm(a.ID) })
 	})
 }
