@@ -42,18 +42,19 @@ type App struct {
 	settingsPath string
 	// appsDir holds installed app programs, appDataDir their private data and
 	// registryPath the installed app list.
-	appsDir      string
-	appDataDir   string
-	registryPath string
-	registry     *store.Registry
-	page         *store.Page
-	installer    *store.Installer
-	host         *store.WebAppHost
-	capabilities *capability.Service
-	gateway      *gateway.Service
-	settingsPage *settingspage.Page
-	agentPage    *agent.Page
-	taskPage     *task.Page
+	appsDir       string
+	appDataDir    string
+	registryPath  string
+	registry      *store.Registry
+	page          *store.Page
+	installer     *store.Installer
+	host          *store.WebAppHost
+	capabilities  *capability.Service
+	gateway       *gateway.Service
+	settingsPage  *settingspage.Page
+	assistantPage *agent.Page
+	agentPage     *agent.AgentPage
+	taskPage      *task.Page
 	// quitting is set before the windows close for a quit, so that the close
 	// handler lets the window go instead of hiding it to the tray.
 	quitting bool
@@ -81,12 +82,14 @@ func New() *App {
 	// 006 装配网关与设置模块：侧栏状态由网关快照注入。
 	a.setUpGateway()
 	// 007 装配助手模块：会话本地持久化，对话走网关。
+	// 011 拆出独立的 Agent 管理页，两者共享会话与 Agent 工作区。
 	a.setUpAgent()
 	a.shell.Pages = map[shell.ModuleID]shell.Page{
-		shell.ModuleStore:    a.page,
-		shell.ModuleAgent:    a.agentPage,
-		shell.ModuleTask:     a.taskPage,
-		shell.ModuleSettings: a.settingsPage,
+		shell.ModuleStore:     a.page,
+		shell.ModuleAssistant: a.assistantPage,
+		shell.ModuleAgent:     a.agentPage,
+		shell.ModuleTask:      a.taskPage,
+		shell.ModuleSettings:  a.settingsPage,
 	}
 	return a
 }
@@ -187,11 +190,11 @@ func (a *App) Run() error {
 		a.quitting = true
 		// 007: cancel a running reply and persist what streamed before exit.
 		// 008: cancel a running task group or plan.
-		if a.agentPage != nil {
-			if a.agentPage.Dispatcher != nil {
-				a.agentPage.Dispatcher.Shutdown()
+		if a.assistantPage != nil {
+			if a.assistantPage.Dispatcher != nil {
+				a.assistantPage.Dispatcher.Shutdown()
 			}
-			a.agentPage.Runner.Shutdown()
+			a.assistantPage.Runner.Shutdown()
 		}
 		if a.host != nil {
 			a.host.CloseAll()

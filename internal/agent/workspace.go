@@ -150,6 +150,9 @@ func (w *Workspace) Ensure() error {
 // its default text without writing; an unreadable, oversized or non UTF-8
 // file is reported through ErrWorkspaceCorrupt and left on disk.
 func (w *Workspace) Load() (WorkspaceContent, error) {
+	if w.dir == "" {
+		return WorkspaceContent{}, nil
+	}
 	var corrupt []string
 	read := func(name, fallback string) string {
 		path := w.Path(name)
@@ -194,6 +197,9 @@ func (w *Workspace) Load() (WorkspaceContent, error) {
 // Save replaces one workspace text file atomically. Only the workspace text
 // files and plugins.json are accepted.
 func (w *Workspace) Save(name, content string) error {
+	if w.dir == "" {
+		return nil
+	}
 	if !workspaceTextFile(name) {
 		return fmt.Errorf("agent: %q is not a workspace text file", name)
 	}

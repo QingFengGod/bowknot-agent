@@ -273,7 +273,7 @@ func TestRegistryIgnoresLegacyAgentData(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(legacy, "conversations"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	legacySubs := filepath.Join(legacy, SubAgentsFileName)
+	legacySubs := filepath.Join(legacy, "subagents.json")
 	if err := os.WriteFile(legacySubs, []byte(`{"schema":1,"agents":[{"id":"a-12345678"}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestRegistryIgnoresLegacyAgentData(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A stale subagents.json directly in the agents root must be ignored too.
-	if err := os.WriteFile(filepath.Join(root, SubAgentsFileName), []byte(`{"schema":1}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "subagents.json"), []byte(`{"schema":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -297,7 +297,7 @@ func TestRegistryIgnoresLegacyAgentData(t *testing.T) {
 	if _, err := os.Stat(legacySubs); err != nil {
 		t.Errorf("legacy subagents.json was touched: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, SubAgentsFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "subagents.json")); err != nil {
 		t.Errorf("stale agents/subagents.json was touched: %v", err)
 	}
 }

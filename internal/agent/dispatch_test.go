@@ -22,10 +22,10 @@ type dispatchFixture struct {
 	dispatcher *Dispatcher
 	convs      *Store
 	tasks      *task.Store
-	subs       *SubAgentStore
+	agents     *Registry
 	runner     *Runner
 	convID     string
-	agent      SubAgent
+	agent      Agent
 	chatter    *fakeChatter
 }
 
@@ -39,16 +39,19 @@ func newDispatchFixture(t *testing.T, planReply, reportReply, summaryReply func(
 		targets:  []gateway.TargetView{{ProviderID: testProvider, ProviderName: "A", Model: testModel}},
 	}
 	convs := NewStore("")
-	subs := NewSubAgentStore("")
+	agents := NewRegistry(t.TempDir())
+	if err := agents.Load(); err != nil {
+		t.Fatalf("load agents: %v", err)
+	}
 	tasks := task.NewStore("")
-	agent, err := subs.Save(SubAgent{Name: "资料整理", Persona: "你负责整理材料。", Enabled: true,
+	agent, err := agents.Create(Agent{Name: "资料整理", Enabled: true,
 		ProviderID: testProvider, Model: testModel})
 	if err != nil {
 		t.Fatalf("save sub agent: %v", err)
 	}
 	runner := NewRunner(f, convs)
 	runner.SetTarget(testProvider, testModel)
-	d := NewDispatcher(f, convs, tasks, subs, runner)
+	d := NewDispatcher(f, convs, tasks, agents, runner)
 
 	f.handler = func(ctx context.Context, req gateway.ChatRequest) (gateway.ChatResponse, error) {
 		var text string
@@ -95,7 +98,7 @@ func newDispatchFixture(t *testing.T, planReply, reportReply, summaryReply func(
 		t.Fatalf("save conversation: %v", err)
 	}
 
-	return &dispatchFixture{dispatcher: d, convs: convs, tasks: tasks, subs: subs,
+	return &dispatchFixture{dispatcher: d, convs: convs, tasks: tasks, agents: agents,
 		runner: runner, convID: conv.ID, agent: agent, chatter: f}
 }
 
@@ -536,7 +539,7 @@ func TestDeleteRefusesUnsettledGroup(t *testing.T) {
 }
 
 func TestParsePlan(t *testing.T) {
-	candidates := []SubAgent{{ID: "a-00000001", Name: "A"}}
+	candidates := []Agent{{ID: "a-00000001", Name: "A"}}
 	cases := []struct {
 		name    string
 		content string

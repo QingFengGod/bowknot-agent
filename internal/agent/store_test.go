@@ -39,6 +39,14 @@ func TestStoreAgentConversationsStaySeparate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, path := range []string{
+		filepath.Join(dir, MainAgentID, SessionsDirName, main.ID+".json"),
+		filepath.Join(dir, "a-12345678", SessionsDirName, sub.ID+".json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("conversation file %s is missing: %v", path, err)
+		}
+	}
 
 	if list := s.List(); len(list) != 1 || list[0].AgentID != "" {
 		t.Errorf("main list = %+v", list)
@@ -139,7 +147,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err := s.Save(conv.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, conv.ID+".json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, MainAgentID, SessionsDirName, conv.ID+".json")); err != nil {
 		t.Fatalf("conversation file missing: %v", err)
 	}
 
@@ -200,7 +208,7 @@ func TestStoreDeleteRemovesFile(t *testing.T) {
 	if _, ok := s.Get(conv.ID); ok {
 		t.Error("deleted conversation still readable")
 	}
-	if _, err := os.Stat(filepath.Join(dir, conv.ID+".json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, MainAgentID, SessionsDirName, conv.ID+".json")); !os.IsNotExist(err) {
 		t.Errorf("file still exists: %v", err)
 	}
 	if err := s.Delete(conv.ID); err != ErrConversationNotFound {
@@ -210,26 +218,35 @@ func TestStoreDeleteRemovesFile(t *testing.T) {
 
 func TestStoreSkipsBadFiles(t *testing.T) {
 	dir := t.TempDir()
+	sessions := filepath.Join(dir, MainAgentID, SessionsDirName)
+	if err := os.MkdirAll(sessions, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	valid := Conversation{
 		Schema: SchemaVersion, ID: "c-11111111", Title: "好的",
 		CreatedAt: 1, UpdatedAt: 2,
 		Messages: []Message{{Role: RoleUser, Content: "hi", Status: StatusOK, At: 1}},
 	}
-	writeJSON(t, filepath.Join(dir, "c-11111111.json"), valid)
-	writeJSON(t, filepath.Join(dir, "c-22222222.json"), Conversation{
+	writeJSON(t, filepath.Join(sessions, "c-11111111.json"), valid)
+	writeJSON(t, filepath.Join(sessions, "c-22222222.json"), Conversation{
 		Schema: 99, ID: "c-22222222", CreatedAt: 1, UpdatedAt: 1,
 	})
-	writeJSON(t, filepath.Join(dir, "c-33333333.json"), Conversation{
+	writeJSON(t, filepath.Join(sessions, "c-33333333.json"), Conversation{
 		Schema: SchemaVersion, ID: "bad", CreatedAt: 1, UpdatedAt: 1,
 	})
-	if err := os.WriteFile(filepath.Join(dir, "c-44444444.json"), []byte("not json"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(sessions, "c-44444444.json"), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	huge := filepath.Join(dir, "c-55555555.json")
+	huge := filepath.Join(sessions, "c-55555555.json")
 	if err := os.WriteFile(huge, []byte(strings.Repeat("x", MaxConversationBytes+1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignored"), 0o600); err != nil {
+	// A sub agent conversation stored under the main agent directory is not
+	// merged into the main list.
+	writeJSON(t, filepath.Join(sessions, "c-66666666.json"), Conversation{
+		Schema: SchemaVersion, ID: "c-66666666", AgentID: "a-12345678", CreatedAt: 1, UpdatedAt: 1,
+	})
+	if err := os.WriteFile(filepath.Join(sessions, "notes.txt"), []byte("ignored"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -241,8 +258,9 @@ func TestStoreSkipsBadFiles(t *testing.T) {
 	if len(list) != 1 || list[0].ID != valid.ID {
 		t.Fatalf("list = %+v, want only the valid conversation", list)
 	}
-	for _, name := range []string{"c-22222222.json", "c-33333333.json", "c-44444444.json", "c-55555555.json"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+	for _, name := range []string{"c-22222222.json", "c-33333333.json", "c-44444444.json",
+		"c-55555555.json", "c-66666666.json"} {
+		if _, err := os.Stat(filepath.Join(sessions, name)); err != nil {
 			t.Errorf("skipped file %s was removed: %v", name, err)
 		}
 	}

@@ -50,7 +50,7 @@ type Dispatcher struct {
 	Chatter Chatter
 	Convs   *Store
 	Tasks   *task.Store
-	Subs    *SubAgentStore
+	Agents  *Registry
 	Runner  *Runner
 
 	// Dispatch marshals a UI update to the main thread; nil runs inline.
@@ -74,9 +74,9 @@ type dispatchRun struct {
 }
 
 // NewDispatcher wires a dispatcher over the conversation store, the task
-// store and the sub agent store.
-func NewDispatcher(chatter Chatter, convs *Store, tasks *task.Store, subs *SubAgentStore, runner *Runner) *Dispatcher {
-	return &Dispatcher{Chatter: chatter, Convs: convs, Tasks: tasks, Subs: subs, Runner: runner}
+// store and the agent registry.
+func NewDispatcher(chatter Chatter, convs *Store, tasks *task.Store, agents *Registry, runner *Runner) *Dispatcher {
+	return &Dispatcher{Chatter: chatter, Convs: convs, Tasks: tasks, Agents: agents, Runner: runner}
 }
 
 // Busy reports whether a plan or an execution is running.
@@ -98,13 +98,16 @@ func (d *Dispatcher) RunningGroup() string {
 
 // AvailableAgents returns the enabled sub agents whose model is still a chat
 // route target. These are the planning candidates.
-func (d *Dispatcher) AvailableAgents() []SubAgent {
-	if d.Subs == nil || d.Chatter == nil {
+func (d *Dispatcher) AvailableAgents() []Agent {
+	if d.Agents == nil || d.Chatter == nil {
 		return nil
 	}
 	targets := d.Chatter.ChatTargets()
-	out := make([]SubAgent, 0, len(targets))
-	for _, a := range d.Subs.List() {
+	out := make([]Agent, 0, len(targets))
+	for _, a := range d.Agents.List() {
+		if a.IsMain() {
+			continue
+		}
 		if a.Enabled && targetAvailable(targets, a.ProviderID, a.Model) {
 			out = append(out, a)
 		}
@@ -113,7 +116,7 @@ func (d *Dispatcher) AvailableAgents() []SubAgent {
 }
 
 // AgentUsable reports whether one sub agent can be dispatched now.
-func (d *Dispatcher) AgentUsable(a SubAgent) bool {
+func (d *Dispatcher) AgentUsable(a Agent) bool {
 	if !a.Enabled || d.Chatter == nil {
 		return false
 	}
@@ -209,9 +212,9 @@ func (d *Dispatcher) plan(ctx context.Context, conversationID, userText, provide
 	defer cancel()
 
 	candidates := d.AvailableAgents()
-	prompt := planningPrompt(userText, candidates)
+	prompt := d.planningPrompt(userText, candidates)
 	msgs := []gateway.ChatMessage{
-		{Role: "system", Content: SystemPrompt + "\n\n" + planRules},
+		{Role: "system", Content: d.promptOf(MainAgentID) + "\n\n" + planRules},
 		{Role: "user", Content: prompt},
 	}
 
@@ -270,7 +273,7 @@ func (d *Dispatcher) planFailed(conversationID string, kind gateway.ErrorKind, d
 }
 
 // createGroup stores the confirmed plan and appends its task card message.
-func (d *Dispatcher) createGroup(conversationID, providerID, model string, items []planTask, candidates []SubAgent) {
+func (d *Dispatcher) createGroup(conversationID, providerID, model string, items []planTask, candidates []Agent) {
 	now := time.Now()
 	// Refuse before appending the card, otherwise the conversation would keep
 	// a card that points at no stored group.
@@ -294,7 +297,7 @@ func (d *Dispatcher) createGroup(conversationID, providerID, model string, items
 		return
 	}
 	g := task.NewGroup(now, conversationID, 0, providerID, model)
-	byID := map[string]SubAgent{}
+	byID := map[string]Agent{}
 	for _, a := range candidates {
 		byID[a.ID] = a
 	}
@@ -519,11 +522,11 @@ func (d *Dispatcher) execute(ctx context.Context, run *dispatchRun, done chan st
 // runTask resolves the assignee and turns its structured report into a task
 // outcome. Each task may spend one retry when its output is not valid JSON.
 func (d *Dispatcher) runTask(ctx context.Context, g *task.Group, t *task.Task) task.Outcome {
-	if d.Subs == nil {
+	if d.Agents == nil {
 		return task.Outcome{ErrorCode: string(gateway.KindModel), ErrorMessage: "子 Agent 不存在，无法执行"}
 	}
-	a, ok := d.Subs.Get(t.AssigneeID)
-	if !ok {
+	a, ok := d.Agents.Get(t.AssigneeID)
+	if !ok || a.IsMain() {
 		return task.Outcome{ErrorCode: string(gateway.KindModel), ErrorMessage: "子 Agent 已删除，无法执行"}
 	}
 	if !a.Enabled {
@@ -534,7 +537,7 @@ func (d *Dispatcher) runTask(ctx context.Context, g *task.Group, t *task.Task) t
 	}
 
 	msgs := []gateway.ChatMessage{
-		{Role: "system", Content: a.Persona + "\n\n" + reportRules},
+		{Role: "system", Content: d.promptOf(a.ID) + "\n\n" + reportRules},
 		{Role: "user", Content: taskPrompt(t)},
 	}
 	resp, err := d.chatOnce(ctx, g.ConversationID, t.ID, a.ProviderID, a.Model, msgs)
@@ -586,7 +589,7 @@ func (d *Dispatcher) summarize(ctx context.Context, g *task.Group) {
 	defer cancel()
 
 	msgs := []gateway.ChatMessage{
-		{Role: "system", Content: SystemPrompt + "\n\n" + summaryRules},
+		{Role: "system", Content: d.promptOf(MainAgentID) + "\n\n" + summaryRules},
 		{Role: "user", Content: summaryPrompt(g)},
 	}
 	resp, err := d.chatOnce(sumCtx, g.ConversationID, g.ID, g.ProviderID, g.Model, msgs)
@@ -759,7 +762,7 @@ func lastUserText(c Conversation) string {
 	return ""
 }
 
-func planningPrompt(userText string, candidates []SubAgent) string {
+func (d *Dispatcher) planningPrompt(userText string, candidates []Agent) string {
 	var b strings.Builder
 	b.WriteString("用户消息：\n")
 	b.WriteString(userText)
@@ -769,14 +772,48 @@ func planningPrompt(userText string, candidates []SubAgent) string {
 		b.WriteString(a.ID)
 		b.WriteString("：")
 		b.WriteString(a.Name)
-		line := a.PersonaLine()
-		if line != "" {
+		if line := d.personaLine(a.ID); line != "" {
 			b.WriteString(" — ")
 			b.WriteString(line)
 		}
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// promptOf returns the system prompt of one agent workspace. A workspace that
+// cannot be read falls back to the built-in default.
+func (d *Dispatcher) promptOf(agentID string) string {
+	if d.Agents == nil {
+		return SystemPrompt
+	}
+	return agentPrompt(d.Agents, agentID)
+}
+
+// personaLine returns the first content line of one agent persona for the
+// planning prompt. Headings are skipped, so the default persona adds nothing.
+func (d *Dispatcher) personaLine(agentID string) string {
+	if d.Agents == nil {
+		return ""
+	}
+	content, err := d.Agents.Workspace(agentID).Load()
+	if err != nil {
+		log.Printf("agent: load persona of %s: %v", agentID, err)
+		return ""
+	}
+	return firstContentLine(content.Persona)
+}
+
+// firstContentLine returns the first non-empty line that is not a heading.
+func firstContentLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line
+	}
+	return ""
 }
 
 func taskPrompt(t *task.Task) string {
@@ -825,7 +862,7 @@ type planOutput struct {
 	Tasks []planTask `json:"tasks"`
 }
 
-func parsePlan(content string, candidates []SubAgent) ([]planTask, error) {
+func parsePlan(content string, candidates []Agent) ([]planTask, error) {
 	body := stripJSONFence(content)
 	var out planOutput
 	if err := json.Unmarshal([]byte(body), &out); err != nil {

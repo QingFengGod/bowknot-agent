@@ -12,18 +12,19 @@ var iconFiles embed.FS
 
 // Icons of the shell and the title bar, parsed once at startup.
 var (
-	StoreIcon    = mustIcon("store.svg")
-	AgentIcon    = mustIcon("agent.svg")
-	TaskIcon     = mustIcon("task.svg")
-	CreationIcon = mustIcon("creation.svg")
-	SettingsIcon = mustIcon("settings.svg")
-	SunIcon      = mustIcon("sun.svg")
-	MoonIcon     = mustIcon("moon.svg")
-	AutoIcon     = mustIcon("auto.svg")
-	AngleRight   = mustIcon("angle-right.svg")
-	SendIcon     = mustIcon("send.svg")
-	StopIcon     = mustIcon("stop.svg")
-	AttachIcon   = mustIcon("attach.svg")
+	StoreIcon     = mustIcon("store.svg")
+	AssistantIcon = mustIcon("assistant.svg")
+	AgentIcon     = mustIcon("agent.svg")
+	TaskIcon      = mustIcon("task.svg")
+	CreationIcon  = mustIcon("creation.svg")
+	SettingsIcon  = mustIcon("settings.svg")
+	SunIcon       = mustIcon("sun.svg")
+	MoonIcon      = mustIcon("moon.svg")
+	AutoIcon      = mustIcon("auto.svg")
+	AngleRight    = mustIcon("angle-right.svg")
+	SendIcon      = mustIcon("send.svg")
+	StopIcon      = mustIcon("stop.svg")
+	AttachIcon    = mustIcon("attach.svg")
 )
 
 func mustIcon(name string) *mygoui.SVG {

@@ -58,7 +58,8 @@ func TestClickSwitchesModule(t *testing.T) {
 		want  ModuleID
 		text  string
 	}{
-		{"助手 / Agent", ModuleAgent, "与 Agent 对话并编排任务"},
+		{"助手", ModuleAssistant, "与主 Agent 对话并派发任务"},
+		{"Agent", ModuleAgent, "主 Agent 与子 Agent 管理"},
 		{"创作", ModuleCreation, "图片、视频与语音创作"},
 		{"设置", ModuleSettings, "应用、网关与数据设置"},
 		{"应用", ModuleStore, "已安装应用与商店"},
@@ -223,10 +224,11 @@ func TestDisabledNoticeFollowsCurrentModule(t *testing.T) {
 		status  Status
 		visible bool
 	}{
-		{ModuleAgent, Status{}, true},
+		{ModuleAssistant, Status{}, true},
 		{ModuleCreation, Status{Gateway: GatewayOffline}, true},
 		{ModuleSettings, Status{}, false},
 		{ModuleAgent, Status{Gateway: GatewayOnline}, false},
+		{ModuleAssistant, Status{Gateway: GatewayOnline}, false},
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s-%v", tt.module, tt.status.Gateway), func(t *testing.T) {
@@ -275,7 +277,7 @@ func TestPageReplacesFallbackAndKeepsState(t *testing.T) {
 	if !tester.HasText("页面点击数 1") {
 		t.Fatal("page state did not update")
 	}
-	if err := tester.Click("助手 / Agent"); err != nil {
+	if err := tester.Click("助手"); err != nil {
 		t.Fatal(err)
 	}
 	tester.Frame()

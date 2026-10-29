@@ -27,6 +27,8 @@ const (
 	MaxSubAgents = 20
 	// MaxAgentNameRunes caps the display name.
 	MaxAgentNameRunes = 32
+	// MaxAgentPersonaRunes caps the persona text edited in the agent page.
+	MaxAgentPersonaRunes = 2000
 	// MaxAgentMetaBytes caps one agent metadata file.
 	MaxAgentMetaBytes = 64 << 10
 	// DefaultMainAgentName is the name of the main agent until the user edits
@@ -87,6 +89,30 @@ func (a Agent) Validate() error {
 // ValidAgentID reports whether id is the main agent or a sub agent ID.
 func ValidAgentID(id string) bool {
 	return id == MainAgentID || ValidSubAgentID(id)
+}
+
+// ValidSubAgentID reports whether id has the form a-xxxxxxxx.
+func ValidSubAgentID(id string) bool {
+	if len(id) != 10 || !strings.HasPrefix(id, "a-") {
+		return false
+	}
+	for _, r := range id[2:] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func checkRunes(name, value string, min, max int) error {
+	n := len([]rune(strings.TrimSpace(value)))
+	if n < min {
+		return fmt.Errorf("%s为空", name)
+	}
+	if n > max {
+		return fmt.Errorf("%s %d 字符，超过上限 %d", name, n, max)
+	}
+	return nil
 }
 
 func newAgentID() string {
@@ -291,6 +317,13 @@ func (r *Registry) Get(id string) (Agent, bool) {
 	defer r.mu.Unlock()
 	a, ok := r.agents[id]
 	return a, ok
+}
+
+// Workspace returns the workspace of one agent. It does not touch the disk and
+// does not validate id; the caller falls back to the defaults when the
+// directory is missing.
+func (r *Registry) Workspace(id string) *Workspace {
+	return NewWorkspace(r.root, id)
 }
 
 // Count returns how many sub agents are defined.

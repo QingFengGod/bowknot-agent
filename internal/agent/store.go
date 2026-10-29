@@ -36,47 +36,109 @@ type Summary struct {
 	AgentID   string
 }
 
-// Store keeps the conversations of the assistant, one JSON file each. Every
-// method is safe to call from any goroutine; the view only reads snapshots.
+// Store keeps the conversations of every agent, one JSON file each under
+// agents/<id>/sessions/. Every method is safe to call from any goroutine; the
+// view only reads snapshots.
 type Store struct {
 	mu    sync.Mutex
-	dir   string
+	root  string
 	now   func() time.Time
 	convs map[string]*Conversation
 }
 
-// NewStore returns a store over dir. An empty dir keeps conversations in
-// memory only, which the tests use; Load then does nothing.
-func NewStore(dir string) *Store {
+// NewStore returns a store over the agents root. An empty root keeps
+// conversations in memory only, which the tests use; Load then does nothing.
+func NewStore(root string) *Store {
 	return &Store{
-		dir:   dir,
+		root:  root,
 		now:   time.Now,
 		convs: map[string]*Conversation{},
 	}
 }
 
-// Dir returns the directory the store loads and saves.
-func (s *Store) Dir() string { return s.dir }
+// Root returns the agents root the store loads and saves.
+func (s *Store) Root() string { return s.root }
 
-// Load reads every valid conversation file. Malformed, oversized and
-// unsupported files are logged and skipped, never deleted.
+// normalizeAgentID maps the main agent IDs to the empty ID: both MainAgentID
+// and the empty string mean the main agent.
+func normalizeAgentID(id string) string {
+	if id == MainAgentID {
+		return ""
+	}
+	return id
+}
+
+// SessionsDir returns the directory of one agent's conversations, or "" when
+// the store runs in memory.
+func (s *Store) SessionsDir(agentID string) string {
+	if s.root == "" {
+		return ""
+	}
+	id := normalizeAgentID(agentID)
+	if id == "" {
+		id = MainAgentID
+	}
+	return NewWorkspace(s.root, id).SessionsDir()
+}
+
+// Load reads every valid conversation of every agent workspace. Malformed,
+// oversized and unsupported files are logged and skipped, never deleted. A
+// conversation whose stored agent does not match its directory is skipped, so
+// the two agent lists stay isolated.
 func (s *Store) Load() error {
-	if s.dir == "" {
+	if s.root == "" {
 		return nil
 	}
-	if err := os.MkdirAll(s.dir, storeDirMode); err != nil {
+	if err := os.MkdirAll(s.SessionsDir(""), storeDirMode); err != nil {
 		return fmt.Errorf("agent: create conversation directory: %w", err)
 	}
-	entries, err := os.ReadDir(s.dir)
+	entries, err := os.ReadDir(s.root)
 	if err != nil {
-		return fmt.Errorf("agent: list conversations: %w", err)
+		return fmt.Errorf("agent: list agent workspaces: %w", err)
 	}
-	loaded := make(map[string]*Conversation, len(entries))
+	loaded := map[string]*Conversation{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		agentID, ok := sessionAgentID(entry.Name())
+		if !ok {
+			continue
+		}
+		s.loadAgentSessions(NewWorkspace(s.root, entry.Name()).SessionsDir(), agentID, loaded)
+	}
+	s.mu.Lock()
+	s.convs = loaded
+	s.mu.Unlock()
+	return nil
+}
+
+// sessionAgentID maps one workspace directory name to the agent ID the store
+// uses. Directories that are not an agent workspace are skipped.
+func sessionAgentID(dirName string) (string, bool) {
+	switch {
+	case dirName == MainAgentID:
+		return "", true
+	case ValidSubAgentID(dirName):
+		return dirName, true
+	default:
+		return "", false
+	}
+}
+
+func (s *Store) loadAgentSessions(dir, agentID string, loaded map[string]*Conversation) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		log.Printf("agent: list conversations in %s: %v", dir, err)
+		return
+	}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), conversationExt) {
 			continue
 		}
-		path := filepath.Join(s.dir, entry.Name())
 		info, err := entry.Info()
 		if err != nil {
 			log.Printf("agent: skip conversation %s: %v", entry.Name(), err)
@@ -87,7 +149,7 @@ func (s *Store) Load() error {
 				entry.Name(), MaxConversationBytes)
 			continue
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			log.Printf("agent: skip conversation %s: %v", entry.Name(), err)
 			continue
@@ -97,8 +159,13 @@ func (s *Store) Load() error {
 			log.Printf("agent: skip conversation %s: invalid JSON", entry.Name())
 			continue
 		}
+		c.AgentID = normalizeAgentID(c.AgentID)
 		if err := c.Validate(); err != nil {
 			log.Printf("agent: skip conversation %s: %v", entry.Name(), err)
+			continue
+		}
+		if c.AgentID != agentID {
+			log.Printf("agent: skip conversation %s: agent %q does not match directory", entry.Name(), c.AgentID)
 			continue
 		}
 		if _, exists := loaded[c.ID]; exists {
@@ -111,20 +178,17 @@ func (s *Store) Load() error {
 		cp := c
 		loaded[c.ID] = &cp
 	}
-	s.mu.Lock()
-	s.convs = loaded
-	s.mu.Unlock()
-	return nil
 }
 
-// List returns the summaries ordered by recent update, newest first.
+// List returns the summaries of the main agent ordered by recent update.
 func (s *Store) List() []Summary {
 	return s.ListByAgent("")
 }
 
-// ListByAgent returns the summaries of one agent ordered by recent update.
-// An empty agent ID lists the conversations of the main agent.
+// ListByAgent returns the summaries of one agent ordered by recent update. An
+// empty agent ID lists the conversations of the main agent.
 func (s *Store) ListByAgent(agentID string) []Summary {
+	agentID = normalizeAgentID(agentID)
 	s.mu.Lock()
 	out := make([]Summary, 0, len(s.convs))
 	for _, c := range s.convs {
@@ -166,8 +230,10 @@ func (s *Store) Create() Conversation {
 	return s.CreateFor("")
 }
 
-// CreateFor adds an empty conversation of one agent and returns a copy.
+// CreateFor adds an empty conversation of one agent and returns a copy. The
+// empty ID and "main" both create a main agent conversation.
 func (s *Store) CreateFor(agentID string) Conversation {
+	agentID = normalizeAgentID(agentID)
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -282,8 +348,8 @@ func (s *Store) DropLastAssistant(id string) (bool, error) {
 	return true, nil
 }
 
-// Save writes one conversation atomically: a temporary file in the same
-// directory replaces the old one.
+// Save writes one conversation atomically into its agent's sessions
+// directory: a temporary file in the same directory replaces the old one.
 func (s *Store) Save(id string) error {
 	s.mu.Lock()
 	c, ok := s.convs[id]
@@ -295,21 +361,26 @@ func (s *Store) Save(id string) error {
 	if !ok {
 		return ErrConversationNotFound
 	}
-	if s.dir == "" {
+	if s.root == "" {
 		return nil
 	}
 	if !ValidConversationID(id) {
 		return fmt.Errorf("agent: invalid conversation ID %q", id)
+	}
+	agentID := normalizeAgentID(copy.AgentID)
+	if agentID != "" && !ValidSubAgentID(agentID) {
+		return fmt.Errorf("agent: invalid agent ID %q", copy.AgentID)
 	}
 	data, err := json.Marshal(copy)
 	if err != nil {
 		return fmt.Errorf("agent: encode conversation: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(s.dir, storeDirMode); err != nil {
+	dir := s.SessionsDir(agentID)
+	if err := os.MkdirAll(dir, storeDirMode); err != nil {
 		return fmt.Errorf("agent: create conversation directory: %w", err)
 	}
-	f, err := os.CreateTemp(s.dir, "tmp-*.json")
+	f, err := os.CreateTemp(dir, "tmp-*.json")
 	if err != nil {
 		return fmt.Errorf("agent: create conversation file: %w", err)
 	}
@@ -334,34 +405,64 @@ func (s *Store) Save(id string) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("agent: close conversation: %w", err)
 	}
-	if err := os.Rename(temp, s.path(id)); err != nil {
+	if err := os.Rename(temp, s.path(agentID, id)); err != nil {
 		return fmt.Errorf("agent: replace conversation: %w", err)
 	}
 	temp = ""
 	return nil
 }
 
+// DeleteAgent removes every conversation of one sub agent, both in memory and
+// on disk. The main agent sessions are removed one by one instead.
+func (s *Store) DeleteAgent(agentID string) error {
+	agentID = normalizeAgentID(agentID)
+	if agentID == "" {
+		return errors.New("主 Agent 会话不可批量删除")
+	}
+	if !ValidSubAgentID(agentID) {
+		return fmt.Errorf("agent: invalid agent ID %q", agentID)
+	}
+	s.mu.Lock()
+	for id, c := range s.convs {
+		if normalizeAgentID(c.AgentID) == agentID {
+			delete(s.convs, id)
+		}
+	}
+	s.mu.Unlock()
+	if s.root == "" {
+		return nil
+	}
+	if err := os.RemoveAll(s.SessionsDir(agentID)); err != nil {
+		return fmt.Errorf("agent: delete agent sessions: %w", err)
+	}
+	return nil
+}
+
 // Delete removes one conversation file and its in-memory copy.
 func (s *Store) Delete(id string) error {
 	s.mu.Lock()
-	_, ok := s.convs[id]
+	conv, ok := s.convs[id]
+	agentID := ""
+	if ok {
+		agentID = normalizeAgentID(conv.AgentID)
+	}
 	delete(s.convs, id)
 	s.mu.Unlock()
 	if !ok {
 		return ErrConversationNotFound
 	}
-	if s.dir == "" {
+	if s.root == "" {
 		return nil
 	}
 	if !ValidConversationID(id) {
 		return fmt.Errorf("agent: invalid conversation ID %q", id)
 	}
-	if err := os.Remove(s.path(id)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(s.path(agentID, id)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("agent: delete conversation: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) path(id string) string {
-	return filepath.Join(s.dir, id+conversationExt)
+func (s *Store) path(agentID, id string) string {
+	return filepath.Join(s.SessionsDir(agentID), id+conversationExt)
 }

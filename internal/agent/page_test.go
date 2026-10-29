@@ -109,7 +109,7 @@ func TestPageConversationMenuRename(t *testing.T) {
 	if got.Title != "新标题" {
 		t.Errorf("title = %q, want the renamed one", got.Title)
 	}
-	reloaded := NewStore(store.Dir())
+	reloaded := NewStore(store.Root())
 	if err := reloaded.Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestPageEmptyState(t *testing.T) {
 	tester.SetSize(960, 640)
 	tester.Frame()
 	for _, text := range []string{
-		"Bowknot 助手", "新会话", "开始一段新对话", "会话", "还没有会话", "A · m1",
+		"助手", "新会话", "开始一段新对话", "会话", "还没有会话", "A · m1",
 	} {
 		if !tester.HasText(text) {
 			t.Errorf("view does not show %q", text)
@@ -463,21 +463,28 @@ func TestPageSwitchingKeepsGeneration(t *testing.T) {
 
 // newTaskPage builds a page with one enabled sub agent and a gateway that
 // answers plans and reports.
-func newTaskPage(t *testing.T) (*Page, *Store, *task.Store, *SubAgentStore, SubAgent) {
+func newTaskPage(t *testing.T) (*Page, *Store, *task.Store, *Registry, Agent) {
 	t.Helper()
 	f := &fakeChatter{
 		snapshot: onlineSnapshot("m1"),
 		targets:  []gateway.TargetView{{ProviderID: "p-00000001", ProviderName: "A", Model: "m1"}},
 	}
-	store := NewStore(t.TempDir())
+	root := t.TempDir()
+	store := NewStore(root)
 	if err := store.Load(); err != nil {
 		t.Fatal(err)
 	}
 	tasks := task.NewStore("")
-	subs := NewSubAgentStore("")
-	a, err := subs.Save(SubAgent{Name: "资料整理", Persona: "整理材料", Enabled: true,
+	agents := NewRegistry(root)
+	if err := agents.Load(); err != nil {
+		t.Fatal(err)
+	}
+	a, err := agents.Create(Agent{Name: "资料整理", Enabled: true,
 		ProviderID: "p-00000001", Model: "m1"})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agents.Workspace(a.ID).Save(PersonaFileName, "整理材料"); err != nil {
 		t.Fatal(err)
 	}
 	f.handler = func(ctx context.Context, req gateway.ChatRequest) (gateway.ChatResponse, error) {
@@ -498,10 +505,10 @@ func newTaskPage(t *testing.T) (*Page, *Store, *task.Store, *SubAgentStore, SubA
 			}, nil
 		}
 	}
-	p := NewPage(f, store, tasks, subs)
+	p := NewPage(f, store, tasks, agents)
 	p.Dispatch = func(fn func()) { fn() }
 	p.Runner.SetTarget("p-00000001", "m1")
-	return p, store, tasks, subs, a
+	return p, store, tasks, agents, a
 }
 
 func TestPageTaskModeNeedsSubAgent(t *testing.T) {
@@ -569,60 +576,10 @@ func TestPageTaskCardAbandon(t *testing.T) {
 	}
 }
 
-func TestPageSubAgentFormSavesAndDeletes(t *testing.T) {
-	p, _, _, subs, _ := newTaskPage(t)
-	tester := newPageTester(t, p)
-	for _, text := range []string{"资料整理", "+ 新建子 Agent"} {
-		if !tester.HasText(text) {
-			t.Errorf("agent column does not show %q", text)
-		}
-	}
-	clickAndFrame(t, tester, "+ 新建子 Agent")
-	if !p.SubFormOpen || p.SubFormID != "" {
-		t.Fatalf("form = %v/%q", p.SubFormOpen, p.SubFormID)
-	}
-	if !tester.HasText("新建子 Agent") {
-		t.Error("form title missing")
-	}
-	p.SubFormName = "资料整理"
-	p.SubFormPersona = "重复的名字"
-	clickAndFrame(t, tester, "保存")
-	if p.SubFormError != ErrSubAgentNameTaken.Error() {
-		t.Errorf("form error = %q", p.SubFormError)
-	}
-	if subs.Count() != 1 {
-		t.Errorf("sub agents = %d, want 1", subs.Count())
-	}
-
-	p.SubFormName = "写作"
-	p.SubFormPersona = "负责写作"
-	p.SubFormTarget = "A · m1"
-	p.SubFormEnabled = true
-	clickAndFrame(t, tester, "保存")
-	if p.SubFormOpen || subs.Count() != 2 {
-		t.Fatalf("form = %v, count = %d", p.SubFormOpen, subs.Count())
-	}
-	if !tester.HasText("写作") {
-		t.Error("new sub agent missing from the column")
-	}
-
-	writer := subs.List()[1]
-	p.RequestSubDelete(writer.ID)
-	tester.Frame()
-	if !tester.HasText("删除子 Agent「写作」后不可恢复") &&
-		!tester.HasText("删除子 Agent「写作」后不可恢复，历史任务仍保留其名称。确认删除？") {
-		t.Error("delete confirmation missing")
-	}
-	clickAndFrame(t, tester, "确认删除")
-	if subs.Count() != 1 {
-		t.Errorf("sub agents = %d, want 1 after deleting", subs.Count())
-	}
-}
-
 func TestPageSubAgentMissingModelDisablesTaskMode(t *testing.T) {
 	p, _, _, _, _ := newTaskPage(t)
-	other := SubAgent{Name: "别的", Persona: "人设", Enabled: true, ProviderID: "p-00000009", Model: "m9"}
-	if _, err := p.Subs.Save(other); err != nil {
+	other, err := p.Agents.Create(Agent{Name: "别的", Enabled: true, ProviderID: "p-00000009", Model: "m9"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if p.Dispatcher.AgentUsable(other) {
@@ -630,127 +587,6 @@ func TestPageSubAgentMissingModelDisablesTaskMode(t *testing.T) {
 	}
 	if len(p.Dispatcher.AvailableAgents()) != 1 {
 		t.Errorf("candidates = %d, want 1", len(p.Dispatcher.AvailableAgents()))
-	}
-}
-
-func TestPageDirectChatWithSubAgent(t *testing.T) {
-	f := &fakeChatter{
-		snapshot: onlineSnapshot("m1"),
-		targets:  []gateway.TargetView{{ProviderID: "p-00000001", ProviderName: "A", Model: "m1"}},
-	}
-	var got gateway.ChatRequest
-	f.handler = func(ctx context.Context, req gateway.ChatRequest) (gateway.ChatResponse, error) {
-		got = req
-		return gateway.ChatResponse{Content: "收到", Model: req.Model, HasUsage: true}, nil
-	}
-	store := NewStore(t.TempDir())
-	if err := store.Load(); err != nil {
-		t.Fatal(err)
-	}
-	subs := NewSubAgentStore("")
-	a, err := subs.Save(SubAgent{Name: "短剧", Persona: "你是短剧剧本专家", Enabled: true,
-		ProviderID: "p-00000001", Model: "m1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := NewPage(f, store, nil, subs)
-	p.Dispatch = func(fn func()) { fn() }
-	main := store.Create()
-	if _, err := store.Append(main.ID, Message{Role: RoleUser, Content: "主导会话",
-		Status: StatusOK, At: 1}); err != nil {
-		t.Fatal(err)
-	}
-	p.CurrentID = main.ID
-	tester := newPageTester(t, p)
-	if !tester.HasText("主导会话") {
-		t.Fatal("main conversation missing before switching")
-	}
-
-	clickAndFrame(t, tester, "短剧")
-	if p.CurrentAgent != a.ID {
-		t.Fatalf("current agent = %q, want %q", p.CurrentAgent, a.ID)
-	}
-	if p.CurrentID != "" {
-		t.Errorf("current conversation = %q, want none for a new agent", p.CurrentID)
-	}
-	if tester.HasText("主导会话") {
-		t.Error("the conversation list still shows the main agent's conversation")
-	}
-
-	p.Input = "帮我写个短剧"
-	p.Send()
-	waitFor(t, func() bool { return !p.Runner.Busy() })
-
-	if len(got.Messages) == 0 || got.Messages[0].Content != "你是短剧剧本专家" {
-		t.Errorf("system message = %+v, want the sub agent persona", got.Messages)
-	}
-	if got.Model != "m1" {
-		t.Errorf("model = %q, want the sub agent binding", got.Model)
-	}
-	list := store.ListByAgent(a.ID)
-	if len(list) != 1 || list[0].AgentID != a.ID {
-		t.Fatalf("sub agent conversations = %+v", list)
-	}
-	if len(store.List()) != 1 {
-		t.Errorf("main conversations = %d, want the original one", len(store.List()))
-	}
-	conv, _ := store.Get(list[0].ID)
-	if conv.Messages[1].Content != "收到" || conv.Messages[1].Status != StatusOK {
-		t.Errorf("reply = %+v", conv.Messages)
-	}
-	tester.Frame()
-	if !tester.HasText("收到") {
-		t.Error("view does not show the sub agent reply")
-	}
-
-	if err := subs.SetEnabled(a.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if got := p.Blocker(); got != "该子 Agent 已停用，启用后可对话" {
-		t.Errorf("blocker = %q after disabling the sub agent", got)
-	}
-}
-
-func TestPageMainAgentRowRestoresMainConversations(t *testing.T) {
-	f := &fakeChatter{
-		snapshot: onlineSnapshot("m1"),
-		targets:  []gateway.TargetView{{ProviderID: "p-00000001", ProviderName: "A", Model: "m1"}},
-	}
-	store := NewStore(t.TempDir())
-	subs := NewSubAgentStore("")
-	a, err := subs.Save(SubAgent{Name: "短剧", Persona: "人设", Enabled: true,
-		ProviderID: "p-00000001", Model: "m1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := NewPage(f, store, nil, subs)
-	p.Dispatch = func(fn func()) { fn() }
-	main := store.Create()
-	if _, err := store.Append(main.ID, Message{Role: RoleUser, Content: "主导会话",
-		Status: StatusOK, At: 1}); err != nil {
-		t.Fatal(err)
-	}
-	subConv := store.CreateFor(a.ID)
-	if _, err := store.Append(subConv.ID, Message{Role: RoleUser, Content: "子会话",
-		Status: StatusOK, At: 2}); err != nil {
-		t.Fatal(err)
-	}
-	p.CurrentID = main.ID
-	tester := newPageTester(t, p)
-
-	clickAndFrame(t, tester, "短剧")
-	if p.CurrentID != subConv.ID {
-		t.Errorf("current = %q, want the sub agent's newest conversation", p.CurrentID)
-	}
-	if tester.HasText("主导会话") {
-		t.Error("main conversation still listed under the sub agent")
-	}
-	clickAndFrame(t, tester, "Bowknot 助手")
-	if p.CurrentAgent != "" || p.CurrentID != main.ID {
-		t.Errorf("back to main = %q/%q", p.CurrentAgent, p.CurrentID)
-	}
-	if !tester.HasText("主导会话") || tester.HasText("子会话") {
-		t.Error("main agent does not show only its own conversations")
 	}
 }
 

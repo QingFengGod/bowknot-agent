@@ -12,11 +12,12 @@ type ModuleID string
 
 // Modules of the shell.
 const (
-	ModuleStore    ModuleID = "store"
-	ModuleAgent    ModuleID = "agent"
-	ModuleTask     ModuleID = "task"
-	ModuleCreation ModuleID = "creation"
-	ModuleSettings ModuleID = "settings"
+	ModuleStore     ModuleID = "store"
+	ModuleAssistant ModuleID = "assistant"
+	ModuleAgent     ModuleID = "agent"
+	ModuleTask      ModuleID = "task"
+	ModuleCreation  ModuleID = "creation"
+	ModuleSettings  ModuleID = "settings"
 )
 
 // Module is one entry of the navigation.
@@ -30,7 +31,8 @@ type Module struct {
 // Modules are the navigation entries, in order.
 var Modules = []Module{
 	{ModuleStore, "应用", "已安装应用与商店", ui.StoreIcon},
-	{ModuleAgent, "助手 / Agent", "与 Agent 对话并编排任务", ui.AgentIcon},
+	{ModuleAssistant, "助手", "与主 Agent 对话并派发任务", ui.AssistantIcon},
+	{ModuleAgent, "Agent", "主 Agent 与子 Agent 管理", ui.AgentIcon},
 	{ModuleTask, "任务", "任务计划、运行与结果", ui.TaskIcon},
 	{ModuleCreation, "创作", "图片、视频与语音创作", ui.CreationIcon},
 	{ModuleSettings, "设置", "应用、网关与数据设置", ui.SettingsIcon},
@@ -224,7 +226,7 @@ func (s *Shell) content(c *mygoui.Context, t *mygoui.Theme) {
 // disabledNotice explains why the assistant and creation modules are not
 // usable until the gateway is online.
 func (s *Shell) disabledNotice(c *mygoui.Context, t *mygoui.Theme) {
-	if s.Current != ModuleAgent && s.Current != ModuleCreation {
+	if s.Current != ModuleAssistant && s.Current != ModuleCreation {
 		return
 	}
 	if reason := s.Status.DisabledReason(); reason != "" {
