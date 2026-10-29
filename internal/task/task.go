@@ -13,10 +13,16 @@ import (
 
 // 任务文件的结构与上限。schema 变更时必须递增并处理旧版本。
 const (
-	// SchemaVersion is the task file schema this build reads.
-	SchemaVersion = 1
+	// SchemaVersion is the task file schema this build writes. Schema 1 files
+	// are still read: they differ only by the group summary.
+	SchemaVersion = 2
 	// MaxTasksPerGroup caps the tasks of one plan.
 	MaxTasksPerGroup = 5
+	// MaxGroups caps the stored task groups, so the task directory cannot grow
+	// without bound. Reaching it blocks new plans until the user cleans up.
+	MaxGroups = 200
+	// MaxSummaryRunes caps the group summary kept with the group.
+	MaxSummaryRunes = 4000
 	// MaxConcurrentTasks is how many tasks of one group run at once.
 	MaxConcurrentTasks = 2
 	// MaxTaskFileBytes is the largest task file the store loads.
@@ -161,6 +167,7 @@ type Group struct {
 	ProviderID     string      `json:"provider_id"`
 	Model          string      `json:"model"`
 	Status         GroupStatus `json:"status"`
+	Summary        string      `json:"summary,omitempty"`
 	CreatedAt      int64       `json:"created_at"`
 	UpdatedAt      int64       `json:"updated_at"`
 	Tasks          []Task      `json:"tasks"`
@@ -314,6 +321,49 @@ func (g *Group) MarkInterrupted(now time.Time) {
 	g.UpdatedAt = at
 }
 
+// Resume reopens a group left interrupted: its interrupted tasks become
+// pending again so the scheduler runs only the unfinished work. Done, failed
+// and canceled tasks keep their outcome. The summary is cleared because the
+// group is no longer settled.
+func (g *Group) Resume(now time.Time) bool {
+	if g.Status != GroupInterrupted {
+		return false
+	}
+	at := now.Unix()
+	for i := range g.Tasks {
+		switch g.Tasks[i].Status {
+		case TaskInterrupted, TaskPending:
+			g.Tasks[i].Status = TaskPending
+			g.Tasks[i].ErrorCode = ""
+			g.Tasks[i].ErrorMessage = ""
+			g.Tasks[i].UpdatedAt = at
+		}
+	}
+	g.Status = GroupRunning
+	g.Summary = ""
+	g.UpdatedAt = at
+	return true
+}
+
+// Terminate closes an interrupted group for good: unfinished tasks become
+// canceled and the outcomes already produced are kept.
+func (g *Group) Terminate(now time.Time) bool {
+	if g.Status != GroupInterrupted {
+		return false
+	}
+	at := now.Unix()
+	for i := range g.Tasks {
+		switch g.Tasks[i].Status {
+		case TaskInterrupted, TaskPending:
+			g.Tasks[i].Status = TaskCanceled
+			g.Tasks[i].UpdatedAt = at
+		}
+	}
+	g.Status = GroupCanceled
+	g.UpdatedAt = at
+	return true
+}
+
 // CancelPending marks every task that has not started as canceled.
 func (g *Group) CancelPending(now time.Time) {
 	at := now.Unix()
@@ -332,7 +382,7 @@ func (g *Group) Touch(now time.Time) { g.UpdatedAt = now.Unix() }
 // Validate checks a group read from disk. A file that fails is skipped by the
 // store and never deleted.
 func (g *Group) Validate() error {
-	if g.Schema != SchemaVersion {
+	if g.Schema < 1 || g.Schema > SchemaVersion {
 		return fmt.Errorf("schema %d 不受支持", g.Schema)
 	}
 	if !ValidGroupID(g.ID) {
@@ -352,6 +402,9 @@ func (g *Group) Validate() error {
 	}
 	if strings.TrimSpace(g.ProviderID) == "" || strings.TrimSpace(g.Model) == "" {
 		return errors.New("规划模型为空")
+	}
+	if err := checkRunes("汇总", g.Summary, 0, MaxSummaryRunes); err != nil {
+		return err
 	}
 	if len(g.Tasks) == 0 || len(g.Tasks) > MaxTasksPerGroup {
 		return fmt.Errorf("任务 %d 条，超出 1–%d", len(g.Tasks), MaxTasksPerGroup)

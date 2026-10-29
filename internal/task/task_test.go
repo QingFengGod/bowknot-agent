@@ -67,7 +67,9 @@ func TestGroupValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid", func(g *Group) {}, false},
-		{"schema", func(g *Group) { g.Schema = 2 }, true},
+		{"schema too new", func(g *Group) { g.Schema = SchemaVersion + 1 }, true},
+		{"schema missing", func(g *Group) { g.Schema = 0 }, true},
+		{"schema 1 is readable", func(g *Group) { g.Schema = 1 }, false},
 		{"no tasks", func(g *Group) { g.Tasks = nil }, true},
 		{"too many tasks", func(g *Group) {
 			for i := 0; i < MaxTasksPerGroup; i++ {
@@ -157,6 +159,65 @@ func TestCancelPending(t *testing.T) {
 	}
 	if g.Tasks[2].Status != TaskDone {
 		t.Errorf("done task changed to %s", g.Tasks[2].Status)
+	}
+}
+
+func TestResume(t *testing.T) {
+	g := newGroupForTest(t, TaskDone, TaskInterrupted, TaskPending, TaskFailed)
+	g.Status = GroupInterrupted
+	g.Summary = "旧汇总"
+	g.Tasks[1].ErrorCode = "timeout"
+	g.Tasks[1].ErrorMessage = "请求超时"
+
+	if !g.Resume(time.Unix(1790000200, 0)) {
+		t.Fatal("Resume() = false")
+	}
+	if g.Status != GroupRunning {
+		t.Errorf("group status = %s, want %s", g.Status, GroupRunning)
+	}
+	if g.Summary != "" {
+		t.Errorf("summary = %q, want empty", g.Summary)
+	}
+	if g.Tasks[0].Status != TaskDone || g.Tasks[3].Status != TaskFailed {
+		t.Errorf("settled tasks changed: %s, %s", g.Tasks[0].Status, g.Tasks[3].Status)
+	}
+	for _, i := range []int{1, 2} {
+		if g.Tasks[i].Status != TaskPending {
+			t.Errorf("task %d = %s, want pending", i, g.Tasks[i].Status)
+		}
+	}
+	if g.Tasks[1].ErrorCode != "" || g.Tasks[1].ErrorMessage != "" {
+		t.Errorf("task error kept: %q %q", g.Tasks[1].ErrorCode, g.Tasks[1].ErrorMessage)
+	}
+	if g.Resume(time.Unix(1790000200, 0)) {
+		t.Fatal("running group resumed again")
+	}
+}
+
+func TestTerminate(t *testing.T) {
+	g := newGroupForTest(t, TaskDone, TaskInterrupted, TaskPending)
+	g.Status = GroupInterrupted
+
+	if !g.Terminate(time.Unix(1790000300, 0)) {
+		t.Fatal("Terminate() = false")
+	}
+	if g.Status != GroupCanceled {
+		t.Errorf("group status = %s, want %s", g.Status, GroupCanceled)
+	}
+	for _, i := range []int{1, 2} {
+		if g.Tasks[i].Status != TaskCanceled {
+			t.Errorf("task %d = %s, want canceled", i, g.Tasks[i].Status)
+		}
+	}
+	if g.Tasks[0].Status != TaskDone {
+		t.Errorf("done task changed to %s", g.Tasks[0].Status)
+	}
+	if g.UpdatedAt != 1790000300 {
+		t.Errorf("updated at = %d", g.UpdatedAt)
+	}
+
+	if g.Terminate(time.Unix(1790000300, 0)) {
+		t.Error("terminate twice")
 	}
 }
 

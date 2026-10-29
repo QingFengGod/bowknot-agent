@@ -272,6 +272,27 @@ func (d *Dispatcher) planFailed(conversationID string, kind gateway.ErrorKind, d
 // createGroup stores the confirmed plan and appends its task card message.
 func (d *Dispatcher) createGroup(conversationID, providerID, model string, items []planTask, candidates []SubAgent) {
 	now := time.Now()
+	// Refuse before appending the card, otherwise the conversation would keep
+	// a card that points at no stored group.
+	if d.Tasks.Count() >= task.MaxGroups {
+		msg := Message{
+			Role:         RoleAssistant,
+			Content:      "任务记录已达上限，请先在任务中心清理已结束的任务，再重新派发。",
+			Status:       StatusError,
+			ErrorCode:    string(gateway.KindInternal),
+			ErrorMessage: task.ErrGroupLimit.Error(),
+			At:           now.Unix(),
+		}
+		if _, err := d.Convs.Append(conversationID, msg); err != nil {
+			d.notice(err.Error())
+			return
+		}
+		if err := d.Convs.Save(conversationID); err != nil {
+			d.notice("会话保存失败：" + err.Error())
+		}
+		d.repaint()
+		return
+	}
 	g := task.NewGroup(now, conversationID, 0, providerID, model)
 	byID := map[string]SubAgent{}
 	for _, a := range candidates {
@@ -346,11 +367,86 @@ func (d *Dispatcher) Retry(groupID, taskID string) error {
 	retry := task.NewTask(now, orig.Goal, orig.Input, orig.Criteria, orig.AssigneeID, orig.AssigneeName)
 	retry.RetryOf = orig.ID
 	g.Tasks = append(g.Tasks, retry)
+	g.Summary = ""
 	if err := d.startReserved(&g); err != nil {
 		d.Runner.ReleaseExternal()
 		return err
 	}
 	return nil
+}
+
+// Resume reopens an interrupted group and runs its unfinished tasks again.
+// Done tasks keep their outcome; the summary is rebuilt when the group settles.
+func (d *Dispatcher) Resume(groupID string) error {
+	if !d.Runner.ReserveExternal() {
+		return ErrBusy
+	}
+	g, ok := d.Tasks.Get(groupID)
+	if !ok {
+		d.Runner.ReleaseExternal()
+		return ErrGroupNotFound
+	}
+	if g.Status != task.GroupInterrupted {
+		d.Runner.ReleaseExternal()
+		return errors.New("只有已中断的任务计划可以继续")
+	}
+	if !g.Resume(time.Now()) {
+		d.Runner.ReleaseExternal()
+		return ErrNotRunnable
+	}
+	if err := d.startReserved(&g); err != nil {
+		d.Runner.ReleaseExternal()
+		return err
+	}
+	return nil
+}
+
+// Terminate closes an interrupted group without running the remaining tasks.
+func (d *Dispatcher) Terminate(groupID string) error {
+	g, ok := d.Tasks.Get(groupID)
+	if !ok {
+		return ErrGroupNotFound
+	}
+	if !g.Terminate(time.Now()) {
+		return errors.New("只有已中断的任务计划可以终止")
+	}
+	if err := d.Tasks.Save(&g); err != nil {
+		return fmt.Errorf("任务保存失败：%w", err)
+	}
+	d.repaint()
+	return nil
+}
+
+// Delete removes a settled group from the task center. A group that is still
+// pending, running or summarizing must be abandoned first.
+func (d *Dispatcher) Delete(groupID string) error {
+	g, ok := d.Tasks.Get(groupID)
+	if !ok {
+		return ErrGroupNotFound
+	}
+	if !g.Status.Terminal() {
+		return errors.New("任务计划尚未结束，请先放弃或取消")
+	}
+	if d.RunningGroup() == groupID {
+		return ErrGroupBusy
+	}
+	if err := d.Tasks.Delete(groupID); err != nil {
+		return fmt.Errorf("任务删除失败：%w", err)
+	}
+	d.repaint()
+	return nil
+}
+
+// CleanTerminal removes every settled group and reports how many were removed.
+// It refuses while a plan or execution is running, so no card disappears
+// underneath the conversation view.
+func (d *Dispatcher) CleanTerminal() (int, error) {
+	if d.Busy() {
+		return 0, ErrBusy
+	}
+	removed, err := d.Tasks.DeleteTerminal()
+	d.repaint()
+	return removed, err
 }
 
 // startReserved marks the group running, saves it and launches execution. The
@@ -503,6 +599,7 @@ func (d *Dispatcher) summarize(ctx context.Context, g *task.Group) {
 		}
 		g.Status = task.GroupFailed
 		g.UpdatedAt = time.Now().Unix()
+		g.Summary = clipSummary("汇总失败：" + err.Error())
 		d.saveGroup(g)
 		msg := Message{
 			Role:         RoleAssistant,
@@ -531,8 +628,20 @@ func (d *Dispatcher) summarize(ctx context.Context, g *task.Group) {
 	}
 	g.Status = task.GroupDone
 	g.UpdatedAt = time.Now().Unix()
+	g.Summary = clipSummary(msg.Content)
 	d.saveGroup(g)
 	d.appendSummary(g.ConversationID, msg)
+}
+
+// clipSummary keeps a summary inside the schema limit so the group still
+// validates and saves.
+func clipSummary(text string) string {
+	text = strings.TrimSpace(text)
+	runes := []rune(text)
+	if len(runes) > task.MaxSummaryRunes {
+		return string(runes[:task.MaxSummaryRunes])
+	}
+	return text
 }
 
 func (d *Dispatcher) appendSummary(conversationID string, msg Message) {

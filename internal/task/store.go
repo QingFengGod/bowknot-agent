@@ -19,8 +19,13 @@ const (
 	storeFileMode = 0o600
 )
 
-// ErrGroupNotFound is returned when a group ID is unknown.
-var ErrGroupNotFound = errors.New("任务组不存在")
+// Store errors.
+var (
+	// ErrGroupNotFound is returned when a group ID is unknown.
+	ErrGroupNotFound = errors.New("任务组不存在")
+	// ErrGroupLimit is returned when the store already holds MaxGroups.
+	ErrGroupLimit = fmt.Errorf("任务记录已达上限 %d，请先清理已结束的任务", MaxGroups)
+)
 
 // Summary is one row of the task group list.
 type Summary struct {
@@ -100,6 +105,9 @@ func (s *Store) Load() error {
 			log.Printf("task: skip group %s: duplicate ID %s", entry.Name(), g.ID)
 			continue
 		}
+		// Schema 1 only lacks the group summary; upgrading in memory is enough,
+		// and the next save writes schema 2.
+		g.Schema = SchemaVersion
 		loaded[g.ID] = &g
 	}
 	s.mu.Lock()
@@ -167,7 +175,9 @@ func (s *Store) Get(id string) (Group, bool) {
 	return g.Clone(), true
 }
 
-// Save adds or replaces one group and writes it atomically.
+// Save adds or replaces one group and writes it atomically. A new group is
+// rejected once the store holds MaxGroups; updates of an existing group are
+// always accepted.
 func (s *Store) Save(g *Group) error {
 	if g == nil {
 		return errors.New("task: nil group")
@@ -179,13 +189,25 @@ func (s *Store) Save(g *Group) error {
 		return fmt.Errorf("task: invalid group ID %q", g.ID)
 	}
 	copy := g.Clone()
+	copy.Schema = SchemaVersion
 	s.mu.Lock()
+	if _, exists := s.groups[g.ID]; !exists && len(s.groups) >= MaxGroups {
+		s.mu.Unlock()
+		return ErrGroupLimit
+	}
 	s.groups[g.ID] = &copy
 	s.mu.Unlock()
 	if s.dir == "" {
 		return nil
 	}
 	return writeGroup(s.dir, &copy)
+}
+
+// Count returns the stored group count.
+func (s *Store) Count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.groups)
 }
 
 // Delete removes one group and its file.
@@ -204,6 +226,31 @@ func (s *Store) Delete(id string) error {
 		return fmt.Errorf("task: delete group: %w", err)
 	}
 	return nil
+}
+
+// DeleteTerminal removes every group that reached a terminal status and
+// reports how many were removed. Groups still pending or running are kept.
+func (s *Store) DeleteTerminal() (int, error) {
+	var ids []string
+	s.mu.Lock()
+	for id, g := range s.groups {
+		if g.Status.Terminal() {
+			ids = append(ids, id)
+		}
+	}
+	s.mu.Unlock()
+	sort.Strings(ids)
+	removed := 0
+	for _, id := range ids {
+		if err := s.Delete(id); err != nil {
+			if errors.Is(err, ErrGroupNotFound) {
+				continue
+			}
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func (s *Store) path(id string) string {

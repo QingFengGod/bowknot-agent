@@ -14,6 +14,7 @@ import (
 	settingspage "github.com/QingFengGod/bowknot-agent/internal/settings"
 	"github.com/QingFengGod/bowknot-agent/internal/shell"
 	"github.com/QingFengGod/bowknot-agent/internal/store"
+	"github.com/QingFengGod/bowknot-agent/internal/task"
 	"github.com/QingFengGod/bowknot-agent/internal/ui"
 	"github.com/QingFengGod/bowknot-agent/resources"
 )
@@ -52,6 +53,7 @@ type App struct {
 	gateway      *gateway.Service
 	settingsPage *settingspage.Page
 	agentPage    *agent.Page
+	taskPage     *task.Page
 	// quitting is set before the windows close for a quit, so that the close
 	// handler lets the window go instead of hiding it to the tray.
 	quitting bool
@@ -83,6 +85,7 @@ func New() *App {
 	a.shell.Pages = map[shell.ModuleID]shell.Page{
 		shell.ModuleStore:    a.page,
 		shell.ModuleAgent:    a.agentPage,
+		shell.ModuleTask:     a.taskPage,
 		shell.ModuleSettings: a.settingsPage,
 	}
 	return a

@@ -14,6 +14,7 @@ var iconFiles embed.FS
 var (
 	StoreIcon    = mustIcon("store.svg")
 	AgentIcon    = mustIcon("agent.svg")
+	TaskIcon     = mustIcon("task.svg")
 	CreationIcon = mustIcon("creation.svg")
 	SettingsIcon = mustIcon("settings.svg")
 	SunIcon      = mustIcon("sun.svg")

@@ -20,8 +20,6 @@ const (
 	SubAgentSchemaVersion = 1
 	// SubAgentsFileName is the sub agent file inside the agent directory.
 	SubAgentsFileName = "subagents.json"
-	// MaxSubAgents caps how many sub agents a user may define.
-	MaxSubAgents = 20
 	// MaxSubAgentNameRunes caps the display name.
 	MaxSubAgentNameRunes = 32
 	// MaxPersonaRunes caps the persona text.

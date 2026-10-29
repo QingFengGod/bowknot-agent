@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -355,6 +356,182 @@ func TestCancelRunningGroup(t *testing.T) {
 		if g.Tasks[i].Status != task.TaskCanceled {
 			t.Errorf("task %d = %s, want canceled", i, g.Tasks[i].Status)
 		}
+	}
+}
+
+// interruptedGroup stores a group as it would look after an app restart:
+// one task settled, one left interrupted.
+func interruptedGroup(t *testing.T, f *dispatchFixture, id string) task.Group {
+	t.Helper()
+	now := time.Now()
+	g := task.NewGroup(now, f.convID, 0, testProvider, testModel)
+	g.ID = id
+	done := task.NewTask(now, "整理要点", "材料", "", f.agent.ID, "资料整理")
+	done.Status = task.TaskDone
+	done.DurationMS = 12
+	done.Report = &task.Report{Conclusion: "旧结论"}
+	left := task.NewTask(now, "补充来源", "材料", "", f.agent.ID, "资料整理")
+	left.Status = task.TaskInterrupted
+	g.Tasks = []task.Task{done, left}
+	g.Status = task.GroupInterrupted
+	if err := f.tasks.Save(g); err != nil {
+		t.Fatalf("save interrupted group: %v", err)
+	}
+	return *g
+}
+
+func TestResumeRunsUnfinishedTasks(t *testing.T) {
+	var mu sync.Mutex
+	reports := 0
+	f := newDispatchFixture(t, nil, func(req gateway.ChatRequest) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reports++
+		return `{"conclusion":"新结论","artifacts":[],"open_issues":[],"summary":""}`, nil
+	}, nil)
+	g := interruptedGroup(t, f, "g-00000001")
+
+	if err := f.dispatcher.Resume(g.ID); err != nil {
+		t.Fatalf("Resume() error: %v", err)
+	}
+	f.dispatcher.Wait()
+
+	got, _ := f.tasks.Get(g.ID)
+	if got.Status != task.GroupDone {
+		t.Fatalf("group = %s, want done", got.Status)
+	}
+	if got.Tasks[0].Status != task.TaskDone || got.Tasks[0].Report.Conclusion != "旧结论" {
+		t.Errorf("settled task changed: %+v", got.Tasks[0])
+	}
+	if got.Tasks[1].Status != task.TaskDone || got.Tasks[1].Report == nil ||
+		got.Tasks[1].Report.Conclusion != "新结论" {
+		t.Errorf("unfinished task = %+v", got.Tasks[1])
+	}
+	if got.Summary == "" {
+		t.Error("summary was not written back to the group")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if reports != 1 {
+		t.Errorf("report calls = %d, want 1", reports)
+	}
+	if f.runner.Busy() {
+		t.Error("dispatch slot still held")
+	}
+}
+
+func TestResumeRejectsSettledGroup(t *testing.T) {
+	f := newDispatchFixture(t, nil, nil, nil)
+	g := interruptedGroup(t, f, "g-00000001")
+	if err := f.dispatcher.Terminate(g.ID); err != nil {
+		t.Fatalf("Terminate() error: %v", err)
+	}
+	if err := f.dispatcher.Resume(g.ID); err == nil {
+		t.Fatal("Resume() accepted a canceled group")
+	}
+}
+
+func TestTerminateInterruptedGroup(t *testing.T) {
+	f := newDispatchFixture(t, nil, nil, nil)
+	g := interruptedGroup(t, f, "g-00000001")
+	conv, _ := f.convs.Get(f.convID)
+	messages := len(conv.Messages)
+
+	if err := f.dispatcher.Terminate(g.ID); err != nil {
+		t.Fatalf("Terminate() error: %v", err)
+	}
+	got, _ := f.tasks.Get(g.ID)
+	if got.Status != task.GroupCanceled {
+		t.Fatalf("group = %s, want canceled", got.Status)
+	}
+	if got.Tasks[0].Status != task.TaskDone {
+		t.Errorf("settled task changed to %s", got.Tasks[0].Status)
+	}
+	if got.Tasks[1].Status != task.TaskCanceled {
+		t.Errorf("unfinished task = %s, want canceled", got.Tasks[1].Status)
+	}
+	conv, _ = f.convs.Get(f.convID)
+	if len(conv.Messages) != messages {
+		t.Errorf("terminate appended a message: %d -> %d", messages, len(conv.Messages))
+	}
+}
+
+func TestDeleteAndCleanTerminal(t *testing.T) {
+	f := newDispatchFixture(t, nil, nil, nil)
+	g := f.plan(t)
+	f.dispatcher.Cancel(g.ID)
+
+	if err := f.dispatcher.Delete(g.ID); err != nil {
+		t.Fatalf("Delete() error: %v", err)
+	}
+	if _, ok := f.tasks.Get(g.ID); ok {
+		t.Fatal("deleted group still stored")
+	}
+	if err := f.dispatcher.Delete(g.ID); !errors.Is(err, ErrGroupNotFound) {
+		t.Fatalf("Delete() = %v, want ErrGroupNotFound", err)
+	}
+
+	settled := interruptedGroup(t, f, "g-00000002")
+	if err := f.dispatcher.Terminate(settled.ID); err != nil {
+		t.Fatalf("Terminate() error: %v", err)
+	}
+	now := time.Now()
+	pending := task.NewGroup(now, f.convID, 0, testProvider, testModel)
+	pending.ID = "g-00000003"
+	pending.Status = task.GroupPending
+	pending.Tasks = []task.Task{task.NewTask(now, "待确认", "", "", f.agent.ID, "资料整理")}
+	if err := f.tasks.Save(pending); err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+	removed, err := f.dispatcher.CleanTerminal()
+	if err != nil {
+		t.Fatalf("CleanTerminal() error: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("removed = %d, want 1", removed)
+	}
+	if _, ok := f.tasks.Get(pending.ID); !ok {
+		t.Error("pending group was cleaned")
+	}
+}
+
+func TestPlanRefusesAtGroupLimit(t *testing.T) {
+	f := newDispatchFixture(t, nil, nil, nil)
+	now := time.Now()
+	for i := 0; i < task.MaxGroups; i++ {
+		g := task.NewGroup(now, f.convID, 0, testProvider, testModel)
+		g.ID = fmt.Sprintf("g-%08d", i)
+		g.Status = task.GroupDone
+		g.Tasks = []task.Task{task.NewTask(now, "旧任务", "", "", f.agent.ID, "资料整理")}
+		g.Tasks[0].Status = task.TaskDone
+		if err := f.tasks.Save(g); err != nil {
+			t.Fatalf("save group %d: %v", i, err)
+		}
+	}
+
+	if err := f.dispatcher.Plan(context.Background(), f.convID); err != nil {
+		t.Fatalf("Plan() error: %v", err)
+	}
+	f.dispatcher.Wait()
+
+	if got := len(f.tasks.List()); got != task.MaxGroups {
+		t.Errorf("groups = %d, want %d", got, task.MaxGroups)
+	}
+	conv, _ := f.convs.Get(f.convID)
+	last := conv.Messages[len(conv.Messages)-1]
+	if !strings.Contains(last.Content, "上限") {
+		t.Errorf("limit message = %q", last.Content)
+	}
+	if last.TaskGroupID != "" {
+		t.Errorf("limit message carries a task card: %+v", last)
+	}
+}
+
+func TestDeleteRefusesUnsettledGroup(t *testing.T) {
+	f := newDispatchFixture(t, nil, nil, nil)
+	g := f.plan(t)
+	if err := f.dispatcher.Delete(g.ID); err == nil {
+		t.Fatal("Delete() accepted a pending group")
 	}
 }
 

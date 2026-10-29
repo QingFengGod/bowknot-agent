@@ -1,6 +1,9 @@
 package task
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,6 +133,97 @@ func TestStoreRecoversInterrupted(t *testing.T) {
 	}
 	if got, _ := reloaded.Get(pending.ID); got.Status != GroupPending {
 		t.Fatalf("confirmable group = %s, want pending", got.Status)
+	}
+}
+
+func TestStoreReadsSchema1(t *testing.T) {
+	dir := t.TempDir()
+	g := newGroupForTest(t, TaskDone)
+	g.ID = "g-0000000b"
+	g.Schema = 1
+	g.Summary = ""
+	body, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, g.ID+taskExt), body, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	store := NewStore(dir)
+	if err := store.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	got, ok := store.Get(g.ID)
+	if !ok {
+		t.Fatal("schema 1 group was skipped")
+	}
+	if got.Schema != SchemaVersion {
+		t.Errorf("schema = %d, want %d after load", got.Schema, SchemaVersion)
+	}
+	if err := store.Save(&got); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	reloaded := NewStore(dir)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("reload error: %v", err)
+	}
+	if got, _ := reloaded.Get(g.ID); got.Schema != SchemaVersion {
+		t.Errorf("saved schema = %d, want %d", got.Schema, SchemaVersion)
+	}
+}
+
+func TestStoreGroupLimit(t *testing.T) {
+	store := NewStore("")
+	for i := 0; i < MaxGroups; i++ {
+		g := newGroupForTest(t, TaskPending)
+		g.ID = fmt.Sprintf("g-%08d", i)
+		if err := store.Save(g); err != nil {
+			t.Fatalf("Save(%d) error: %v", i, err)
+		}
+	}
+	if store.Count() != MaxGroups {
+		t.Fatalf("Count() = %d, want %d", store.Count(), MaxGroups)
+	}
+
+	extra := newGroupForTest(t, TaskPending)
+	extra.ID = "g-ffffffff"
+	if err := store.Save(extra); !errors.Is(err, ErrGroupLimit) {
+		t.Fatalf("Save() = %v, want ErrGroupLimit", err)
+	}
+	// Updating an existing group is always allowed, even at the limit.
+	existing, _ := store.Get("g-00000000")
+	existing.UpdatedAt++
+	if err := store.Save(&existing); err != nil {
+		t.Fatalf("update at limit: %v", err)
+	}
+}
+
+func TestStoreDeleteTerminal(t *testing.T) {
+	store := NewStore("")
+	for i, status := range []GroupStatus{GroupPending, GroupDone, GroupFailed, GroupRunning, GroupCanceled, GroupInterrupted} {
+		g := newGroupForTest(t, TaskPending)
+		g.ID = fmt.Sprintf("g-%08d", i)
+		g.Status = status
+		if err := store.Save(g); err != nil {
+			t.Fatalf("Save() error: %v", err)
+		}
+	}
+
+	removed, err := store.DeleteTerminal()
+	if err != nil {
+		t.Fatalf("DeleteTerminal() error: %v", err)
+	}
+	if removed != 4 {
+		t.Errorf("removed = %d, want 4", removed)
+	}
+	if store.Count() != 2 {
+		t.Errorf("Count() = %d, want 2", store.Count())
+	}
+	for _, id := range []string{"g-00000000", "g-00000003"} {
+		if _, ok := store.Get(id); !ok {
+			t.Errorf("unsettled group %s was removed", id)
+		}
 	}
 }
 

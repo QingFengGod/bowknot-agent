@@ -14,6 +14,7 @@ type ModuleID string
 const (
 	ModuleStore    ModuleID = "store"
 	ModuleAgent    ModuleID = "agent"
+	ModuleTask     ModuleID = "task"
 	ModuleCreation ModuleID = "creation"
 	ModuleSettings ModuleID = "settings"
 )
@@ -30,6 +31,7 @@ type Module struct {
 var Modules = []Module{
 	{ModuleStore, "应用", "已安装应用与商店", ui.StoreIcon},
 	{ModuleAgent, "助手 / Agent", "与 Agent 对话并编排任务", ui.AgentIcon},
+	{ModuleTask, "任务", "任务计划、运行与结果", ui.TaskIcon},
 	{ModuleCreation, "创作", "图片、视频与语音创作", ui.CreationIcon},
 	{ModuleSettings, "设置", "应用、网关与数据设置", ui.SettingsIcon},
 }

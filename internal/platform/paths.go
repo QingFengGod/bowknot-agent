@@ -100,6 +100,46 @@ func TaskDir() (string, error) {
 	return taskDir(dir), nil
 }
 
+// AgentsDir returns the root of all agent workspaces in DataDir. It does not
+// create the directory.
+func AgentsDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return agentsDir(dir), nil
+}
+
+// AgentWorkspaceDir returns the workspace directory agents/<id>. It does not
+// create the directory and does not validate id.
+func AgentWorkspaceDir(id string) (string, error) {
+	dir, err := AgentsDir()
+	if err != nil {
+		return "", err
+	}
+	return agentWorkspaceDir(dir, id), nil
+}
+
+// GroupsDir returns the root of group chats in DataDir. It does not create
+// the directory.
+func GroupsDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return groupsDir(dir), nil
+}
+
+// PluginsDir returns the root of installed plugins in DataDir. It does not
+// create the directory.
+func PluginsDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return pluginsDir(dir), nil
+}
+
 func dataDir(home string) string {
 	return filepath.Join(home, DataDirName)
 }
@@ -130,4 +170,20 @@ func agentDir(dir string) string {
 
 func taskDir(dir string) string {
 	return filepath.Join(dir, "tasks")
+}
+
+func agentsDir(dir string) string {
+	return filepath.Join(dir, "agents")
+}
+
+func agentWorkspaceDir(agentsRoot, id string) string {
+	return filepath.Join(agentsRoot, id)
+}
+
+func groupsDir(dir string) string {
+	return filepath.Join(dir, "groups")
+}
+
+func pluginsDir(dir string) string {
+	return filepath.Join(dir, "plugins")
 }

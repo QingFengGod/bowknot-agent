@@ -57,3 +57,27 @@ func TestTaskDir(t *testing.T) {
 		t.Errorf("taskDir(%q) = %q, want %q", dir, got, want)
 	}
 }
+
+func TestAgentsPaths(t *testing.T) {
+	dir := filepath.Join("home", "user", ".bowknot-agent")
+	agents := filepath.Join(dir, "agents")
+	if got, want := agentsDir(dir), agents; got != want {
+		t.Errorf("agentsDir(%q) = %q, want %q", dir, got, want)
+	}
+	if got, want := agentWorkspaceDir(agents, "main"), filepath.Join(agents, "main"); got != want {
+		t.Errorf("agentWorkspaceDir(%q, main) = %q, want %q", agents, got, want)
+	}
+	if got, want := agentWorkspaceDir(agents, "a-12345678"), filepath.Join(agents, "a-12345678"); got != want {
+		t.Errorf("agentWorkspaceDir(%q, a-12345678) = %q, want %q", agents, got, want)
+	}
+}
+
+func TestGroupsAndPluginsDir(t *testing.T) {
+	dir := filepath.Join("home", "user", ".bowknot-agent")
+	if got, want := groupsDir(dir), filepath.Join(dir, "groups"); got != want {
+		t.Errorf("groupsDir(%q) = %q, want %q", dir, got, want)
+	}
+	if got, want := pluginsDir(dir), filepath.Join(dir, "plugins"); got != want {
+		t.Errorf("pluginsDir(%q) = %q, want %q", dir, got, want)
+	}
+}
