@@ -12,6 +12,31 @@ import (
 	"github.com/QingFengGod/bowknot-agent/internal/memory"
 )
 
+func TestSystemPromptRunsDateCheckForSubAgent(t *testing.T) {
+	f := &fakeChatter{snapshot: onlineSnapshot("m1")}
+	agents := NewRegistry(t.TempDir())
+	a, err := agents.Create(Agent{Name: "子 Agent", Enabled: true, ProviderID: "p-00000001", Model: "m1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agents.Workspace(a.ID).Save(PersonaFileName, "只做调研"); err != nil {
+		t.Fatal(err)
+	}
+	prompt, notice := agents.SystemPrompt(f, a.ID, "调研")
+	if notice != "" {
+		t.Errorf("notice = %q", notice)
+	}
+	if !strings.Contains(prompt, "只做调研") {
+		t.Errorf("系统提示缺少人设: %s", prompt)
+	}
+	if weeks := agents.Memory(a.ID).Weeks(); len(weeks) != 1 {
+		t.Fatalf("系统提示未执行记忆日期检查: %+v", weeks)
+	}
+	if prompt, _ := agents.SystemPrompt(f, "a-00000000", "调研"); prompt != "" {
+		t.Errorf("未知 Agent 的系统提示 = %q", prompt)
+	}
+}
+
 // newMemoryAgent creates a sub agent bound to the fake target and opens it.
 func newMemoryAgent(t *testing.T, p *AgentPage, agents *Registry) Agent {
 	t.Helper()

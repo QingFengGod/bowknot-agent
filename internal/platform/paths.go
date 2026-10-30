@@ -130,6 +130,17 @@ func GroupsDir() (string, error) {
 	return groupsDir(dir), nil
 }
 
+// RunsDir returns the root of chat runs in DataDir. Run files live beside the
+// groups so deleting a group keeps its run records. It does not create the
+// directory.
+func RunsDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return runsDir(dir), nil
+}
+
 // PluginsDir returns the root of installed plugins in DataDir. It does not
 // create the directory.
 func PluginsDir() (string, error) {
@@ -182,6 +193,10 @@ func agentWorkspaceDir(agentsRoot, id string) string {
 
 func groupsDir(dir string) string {
 	return filepath.Join(dir, "groups")
+}
+
+func runsDir(dir string) string {
+	return filepath.Join(dir, "runs")
 }
 
 func pluginsDir(dir string) string {

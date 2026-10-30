@@ -43,13 +43,6 @@ type Composer struct {
 	OnSubmit func(text string) bool
 	// OnAttach opens the file picker; a nil value grays out the attach slot.
 	OnAttach func()
-	// TaskMode is whether the draft is sent as a task plan.
-	TaskMode bool
-	// TaskModeDisabled turns off the task mode tag, such as when no sub agent
-	// can accept work.
-	TaskModeDisabled bool
-	// OnToggleTaskMode flips the task mode; a nil value hides the tag.
-	OnToggleTaskMode func()
 }
 
 // ComposerView draws the composer. Enter sends, Shift+Enter breaks the line.
@@ -79,7 +72,6 @@ func ComposerView(c *mygoui.Context, t *mygoui.Theme, m Composer) mygoui.Element
 		row := mygoui.Row(c).FillWidth().Shrink(0).Gap(6).AlignItems(mygoui.Center)
 		row.Children(func() {
 			attachButton(c, t, m)
-			taskModeTag(c, t, m)
 			if m.Hint != "" {
 				mygoui.Text(c, m.Hint).FontSize(10).TextColor(t.TextMuted).
 					SingleLine().Grow(1)
@@ -110,34 +102,6 @@ func attachButton(c *mygoui.Context, t *mygoui.Theme, m Composer) {
 	})
 	if b.Clicked() && m.OnAttach != nil {
 		m.OnAttach()
-	}
-}
-
-// taskModeTag flips the draft between a chat and a task plan. It is an
-// outlined chip while on and muted text while off.
-func taskModeTag(c *mygoui.Context, t *mygoui.Theme, m Composer) {
-	if m.OnToggleTaskMode == nil {
-		return
-	}
-	b := mygoui.ButtonBase(c).Shrink(0).Label("任务模式").
-		Padding(3, 8).Radius(composerRadius / 2).
-		BorderWidth(1).BorderColor(t.Border).Center()
-	if m.TaskModeDisabled {
-		b.Disabled(true)
-	} else if m.TaskMode {
-		b.BorderColor(t.Accent)
-	} else if b.Hovered() {
-		b.Background(t.SurfaceHover)
-	}
-	b.Children(func() {
-		color := t.TextMuted
-		if m.TaskMode && !m.TaskModeDisabled {
-			color = t.Accent
-		}
-		mygoui.Text(c, "任务模式").FontSize(10).TextColor(color)
-	})
-	if b.Clicked() && !m.TaskModeDisabled {
-		m.OnToggleTaskMode()
 	}
 }
 

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "bowknot-demo",
+  "name": "Bowknot 示例插件",
+  "version": "1.0.0",
+  "min_shell_version": "0.1.0",
+  "description": "用于验证插件导入、按 Agent 启用与技能注入的声明式示例插件，提供笔记整理与周报两个技能，并声明工作区读写和记忆检索工具。",
+  "author": "Bowknot",
+  "skills": [
+    "skills/notes.md",
+    "skills/weekly-report.md"
+  ],
+  "tools": [
+    "fs.read",
+    "fs.write",
+    "memory.search"
+  ],
+  "icon": "icon.svg"
+}

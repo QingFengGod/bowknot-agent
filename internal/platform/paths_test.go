@@ -77,6 +77,9 @@ func TestGroupsAndPluginsDir(t *testing.T) {
 	if got, want := groupsDir(dir), filepath.Join(dir, "groups"); got != want {
 		t.Errorf("groupsDir(%q) = %q, want %q", dir, got, want)
 	}
+	if got, want := runsDir(dir), filepath.Join(dir, "runs"); got != want {
+		t.Errorf("runsDir(%q) = %q, want %q", dir, got, want)
+	}
 	if got, want := pluginsDir(dir), filepath.Join(dir, "plugins"); got != want {
 		t.Errorf("pluginsDir(%q) = %q, want %q", dir, got, want)
 	}

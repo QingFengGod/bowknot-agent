@@ -10,6 +10,7 @@ import (
 	"github.com/QingFengGod/bowknot-agent/internal/agent"
 	"github.com/QingFengGod/bowknot-agent/internal/capability"
 	"github.com/QingFengGod/bowknot-agent/internal/gateway"
+	"github.com/QingFengGod/bowknot-agent/internal/group"
 	"github.com/QingFengGod/bowknot-agent/internal/platform"
 	pluginpage "github.com/QingFengGod/bowknot-agent/internal/plugin"
 	settingspage "github.com/QingFengGod/bowknot-agent/internal/settings"
@@ -61,6 +62,9 @@ type App struct {
 	agents      *agent.Registry
 	pluginStore *pluginpage.Store
 	pluginPage  *pluginpage.Page
+	// groupStore keeps groups, runs and group messages; groupManager runs them.
+	groupStore   *group.Store
+	groupManager *group.Manager
 	// quitting is set before the windows close for a quit, so that the close
 	// handler lets the window go instead of hiding it to the tray.
 	quitting bool
@@ -92,6 +96,8 @@ func New() *App {
 	a.setUpAgent()
 	// 013 装配插件模块：本地导入、注册表与按 Agent 启用。
 	a.setUpPlugins()
+	// 015 装配群聊 Run：消息、调度与汇总，并接到助手自动派发。
+	a.setUpGroup()
 	a.shell.Pages = map[shell.ModuleID]shell.Page{
 		shell.ModuleStore:     a.page,
 		shell.ModuleAssistant: a.assistantPage,
@@ -204,6 +210,10 @@ func (a *App) Run() error {
 				a.assistantPage.Dispatcher.Shutdown()
 			}
 			a.assistantPage.Runner.Shutdown()
+		}
+		// 015: cancel running runs, close their buses and mark them interrupted.
+		if a.groupManager != nil {
+			a.groupManager.Shutdown()
 		}
 		if a.host != nil {
 			a.host.CloseAll()

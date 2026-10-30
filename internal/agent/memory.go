@@ -111,6 +111,20 @@ func agentMemoryPrompt(agents *Registry, chatter Chatter, agentID, providerID, m
 	return prompt, notice
 }
 
+// SystemPrompt returns the assembled prompt of one agent for a query, using
+// that agent's own route target for the memory summary. The run manager uses
+// it so sub agents keep their memory and plugin sections.
+func (r *Registry) SystemPrompt(chatter Chatter, agentID, query string) (prompt, notice string) {
+	if r == nil {
+		return SystemPrompt, ""
+	}
+	a, ok := r.Get(agentID)
+	if !ok {
+		return "", ""
+	}
+	return agentMemoryPrompt(r, chatter, agentID, a.ProviderID, a.Model, query)
+}
+
 // summarizeMemory generates the pending summaries off the UI thread.
 func summarizeMemory(mem *memory.Store, chat memory.ChatFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), memorySummaryTimeout)

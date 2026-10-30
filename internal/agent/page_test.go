@@ -9,6 +9,7 @@ import (
 	mygoui "github.com/egoist/mygo/ui"
 
 	"github.com/QingFengGod/bowknot-agent/internal/gateway"
+	"github.com/QingFengGod/bowknot-agent/internal/group"
 	"github.com/QingFengGod/bowknot-agent/internal/task"
 )
 
@@ -511,72 +512,113 @@ func newTaskPage(t *testing.T) (*Page, *Store, *task.Store, *Registry, Agent) {
 	return p, store, tasks, agents, a
 }
 
-func TestPageTaskModeNeedsSubAgent(t *testing.T) {
-	p, _ := newTestPage(t, &fakeChatter{snapshot: onlineSnapshot("m1")})
-	if got := p.taskModeBlocker(); got != "先创建并启用子 Agent" {
-		t.Errorf("task mode blocker = %q", got)
-	}
-	p.ToggleTaskMode()
-	if p.TaskMode {
-		t.Error("task mode turned on without a sub agent")
-	}
+type fakePlanner struct {
+	res  group.PlanResult
+	err  error
+	reqs []group.PlanRequest
 }
 
-func TestPageTaskModePlansAndRuns(t *testing.T) {
-	p, _, tasks, _, _ := newTaskPage(t)
-	tester := newPageTester(t, p)
-	p.TaskMode = true
+func (f *fakePlanner) Plan(_ context.Context, req group.PlanRequest) (group.PlanResult, error) {
+	f.reqs = append(f.reqs, req)
+	return f.res, f.err
+}
+
+func pendingRun(t *testing.T, goal string) group.Run {
+	t.Helper()
+	run := group.NewRun(time.Now(), "", "", "c-00000001", goal)
+	if err := run.SetPlan(time.Now(), group.Plan{
+		ProviderID: "p-00000001",
+		Model:      "m1",
+		Tasks: []group.Task{
+			group.NewTask(time.Now(), "整理待办", "会议纪要", "按负责人分组", "a-00000001", "资料整理", nil),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return *run
+}
+
+func TestPageSendPlansRun(t *testing.T) {
+	p, store := newTestPage(t, &fakeChatter{snapshot: onlineSnapshot("m1")})
+	p.Dispatch = func(fn func()) { fn() }
+	p.Runner.SetTarget("p-00000001", "m1")
+	planner := &fakePlanner{res: group.PlanResult{Run: ptr(pendingRun(t, "整理待办"))}}
+	p.Planner = planner
 	p.Input = "帮我把会议纪要拆成待办"
 	p.Send()
-	p.Dispatcher.Wait()
+	waitFor(t, func() bool { return !p.Runner.External() })
 
-	list := tasks.List()
-	if len(list) != 1 {
-		t.Fatalf("groups = %d, want 1", len(list))
+	conv, ok := store.Get(p.CurrentID)
+	if !ok {
+		t.Fatal("会话缺失")
 	}
-	g, _ := tasks.Get(list[0].ID)
-	if g.Status != task.GroupPending {
-		t.Fatalf("group = %s, want pending", g.Status)
+	if len(conv.Messages) != 2 {
+		t.Fatalf("消息数 = %d", len(conv.Messages))
 	}
-	tester.Frame()
-	for _, text := range []string{"任务计划 1 项", "整理待办", "资料整理", "待开始", "执行", "放弃"} {
-		if !tester.HasText(text) {
-			t.Errorf("card does not show %q", text)
-		}
+	last := conv.Messages[len(conv.Messages)-1]
+	if last.Role != RoleAssistant || !strings.Contains(last.Content, "已生成任务计划（1 项）") {
+		t.Fatalf("助手消息 = %+v", last)
 	}
-
-	clickAndFrame(t, tester, "执行")
-	waitFor(t, func() bool { return !p.Dispatcher.Busy() })
-	g, _ = tasks.Get(g.ID)
-	if g.Status != task.GroupDone || g.Tasks[0].Status != task.TaskDone {
-		t.Fatalf("group = %s, task = %s", g.Status, g.Tasks[0].Status)
+	if !strings.Contains(last.Content, "整理待办") || !strings.Contains(last.Content, "资料整理") {
+		t.Errorf("计划通知缺少任务: %q", last.Content)
 	}
-	tester.Frame()
-	for _, text := range []string{"已完成", "任务已完成，产出见各任务结论。"} {
-		if !tester.HasText(text) {
-			t.Errorf("view does not show %q after the run", text)
-		}
+	if len(planner.reqs) != 1 || planner.reqs[0].Goal != "帮我把会议纪要拆成待办" {
+		t.Fatalf("规划请求 = %+v", planner.reqs)
+	}
+	if planner.reqs[0].ConversationID != p.CurrentID {
+		t.Errorf("规划会话 = %q", planner.reqs[0].ConversationID)
 	}
 }
 
-func TestPageTaskCardAbandon(t *testing.T) {
-	p, _, tasks, _, _ := newTaskPage(t)
-	tester := newPageTester(t, p)
-	p.TaskMode = true
-	p.Input = "拆解一下"
+func TestPageSendPlannerAnswersDirectly(t *testing.T) {
+	p, store := newTestPage(t, &fakeChatter{snapshot: onlineSnapshot("m1")})
+	p.Dispatch = func(fn func()) { fn() }
+	p.Runner.SetTarget("p-00000001", "m1")
+	p.Planner = &fakePlanner{res: group.PlanResult{Answer: "直接回答"}}
+	p.Input = "解释一下"
 	p.Send()
-	p.Dispatcher.Wait()
-	tester.Frame()
+	waitFor(t, func() bool { return !p.Runner.External() })
 
-	clickAndFrame(t, tester, "放弃")
-	list := tasks.List()
-	g, _ := tasks.Get(list[0].ID)
-	if g.Status != task.GroupCanceled {
-		t.Errorf("group = %s, want canceled", g.Status)
+	conv, _ := store.Get(p.CurrentID)
+	if len(conv.Messages) != 2 || conv.Messages[1].Content != "直接回答" {
+		t.Fatalf("消息 = %+v", conv.Messages)
 	}
 }
 
-func TestPageSubAgentMissingModelDisablesTaskMode(t *testing.T) {
+func TestPageSendPlannerFallsBackToReply(t *testing.T) {
+	f := &fakeChatter{
+		snapshot: onlineSnapshot("m1"),
+		handler: func(context.Context, gateway.ChatRequest) (gateway.ChatResponse, error) {
+			return gateway.ChatResponse{Content: "普通回复", Model: "m1", HasUsage: true}, nil
+		},
+	}
+	p, store := newTestPage(t, f)
+	p.Dispatch = func(fn func()) { fn() }
+	p.Runner.SetTarget("p-00000001", "m1")
+	p.Planner = &fakePlanner{err: context.DeadlineExceeded}
+	p.Input = "随便问问"
+	p.Send()
+	waitFor(t, func() bool { return !p.Runner.Busy() && !p.Runner.External() })
+
+	conv, _ := store.Get(p.CurrentID)
+	if len(conv.Messages) != 2 || conv.Messages[1].Content != "普通回复" {
+		t.Fatalf("消息 = %+v", conv.Messages)
+	}
+}
+
+func TestPageWithoutPlannerRepliesDirectly(t *testing.T) {
+	p, _, _, _, _ := newTaskPage(t)
+	store := p.Store
+	p.Input = "你好"
+	p.Send()
+	waitFor(t, func() bool { return !p.Runner.Busy() })
+	conv, _ := store.Get(p.CurrentID)
+	if len(conv.Messages) != 2 || conv.Messages[1].Role != RoleAssistant {
+		t.Fatalf("消息 = %+v", conv.Messages)
+	}
+}
+
+func TestPageSubAgentMissingModelNotUsable(t *testing.T) {
 	p, _, _, _, _ := newTaskPage(t)
 	other, err := p.Agents.Create(Agent{Name: "别的", Enabled: true, ProviderID: "p-00000009", Model: "m9"})
 	if err != nil {
@@ -589,6 +631,8 @@ func TestPageSubAgentMissingModelDisablesTaskMode(t *testing.T) {
 		t.Errorf("candidates = %d, want 1", len(p.Dispatcher.AvailableAgents()))
 	}
 }
+
+func ptr[T any](v T) *T { return &v }
 
 func TestPageMessageMetaWithoutDetailPanel(t *testing.T) {
 	f := &fakeChatter{

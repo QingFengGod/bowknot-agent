@@ -10,6 +10,7 @@ import (
 	mygoui "github.com/egoist/mygo/ui"
 
 	"github.com/QingFengGod/bowknot-agent/internal/gateway"
+	"github.com/QingFengGod/bowknot-agent/internal/group"
 	"github.com/QingFengGod/bowknot-agent/internal/task"
 	"github.com/QingFengGod/bowknot-agent/internal/ui"
 )
@@ -66,9 +67,15 @@ type Page struct {
 	// ChatScroll is where the message stream is scrolled to.
 	ChatScroll mygoui.ScrollState
 
-	// TaskMode sends the next message as a task plan instead of a reply.
-	// The state is memory only.
-	TaskMode bool
+	// Planner turns a message into a run plan when sub agents are available.
+	// Nil keeps every message on the direct reply path.
+	Planner RunPlanner
+}
+
+// RunPlanner plans a run from a user request. The manager implements it; the
+// assistant page only needs the planning entry point.
+type RunPlanner interface {
+	Plan(ctx context.Context, req group.PlanRequest) (group.PlanResult, error)
 }
 
 // NewPage creates the assistant page over the chatter, the conversation store,
@@ -131,14 +138,10 @@ func (p *Page) View() func(c *mygoui.Context) {
 	}
 }
 
-// Send stores the input as a user message, then either starts a reply or, in
-// task mode, asks the dispatcher to plan a task group.
+// Send stores the input as a user message, then starts a direct reply. When a
+// run planner is wired, the main agent first decides whether to delegate.
 func (p *Page) Send() {
 	if p.Runner.Blocked() || p.Blocker() != "" || strings.TrimSpace(p.Input) == "" {
-		return
-	}
-	taskMode := p.TaskMode
-	if taskMode && p.dispatchBlocker() != "" {
 		return
 	}
 	query := strings.TrimSpace(p.Input)
@@ -168,10 +171,13 @@ func (p *Page) Send() {
 		p.ActionError = "会话保存失败：" + err.Error()
 	}
 	p.Input = ""
-	if taskMode {
-		if err := p.Dispatcher.Plan(context.Background(), convID); err != nil {
-			p.ActionError = err.Error()
-		}
+	if p.Planner != nil && !p.Runner.ReserveExternal() {
+		p.ActionError = ErrBusy.Error()
+		p.repaint()
+		return
+	}
+	if p.Planner != nil {
+		go p.plan(convID, query, providerID, model, persona)
 		p.repaint()
 		return
 	}
@@ -179,6 +185,58 @@ func (p *Page) Send() {
 		p.ActionError = err.Error()
 	}
 	p.repaint()
+}
+
+// plan asks the main agent to delegate the request, then writes the direct
+// answer or the pending run notice into the conversation. The single
+// generation slot stays reserved until planning ends.
+func (p *Page) plan(convID, query, providerID, model, persona string) {
+	res, err := p.Planner.Plan(context.Background(), group.PlanRequest{
+		ConversationID: convID,
+		Goal:           query,
+		ProviderID:     providerID,
+		Model:          model,
+	})
+	p.dispatch(func() {
+		p.Runner.ReleaseExternal()
+		switch {
+		case err != nil:
+			// 规划失败按普通问答继续，避免用户的消息只得到一条错误。
+			if startErr := p.Runner.StartWith(context.Background(), convID, providerID, model, persona); startErr != nil {
+				p.ActionError = startErr.Error()
+			}
+		case res.Run != nil:
+			p.appendAssistant(convID, runNotice(*res.Run))
+		case res.Answer != "":
+			p.appendAssistant(convID, res.Answer)
+		}
+		p.repaint()
+	})
+}
+
+// appendAssistant stores one finished assistant message and saves the
+// conversation.
+func (p *Page) appendAssistant(convID, text string) {
+	if _, err := p.Store.Append(convID, Message{
+		Role: RoleAssistant, Content: text, Status: StatusOK, At: time.Now().Unix(),
+	}); err != nil {
+		p.ActionError = err.Error()
+		return
+	}
+	if err := p.Store.Save(convID); err != nil {
+		p.ActionError = "会话保存失败：" + err.Error()
+	}
+}
+
+// runNotice explains the pending run in the conversation. Execution waits for
+// the user to confirm it.
+func runNotice(run group.Run) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("已生成任务计划（%d 项），确认后开始执行：\n", len(run.Plan.Tasks)))
+	for i := range run.Plan.Tasks {
+		b.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, run.Plan.Tasks[i].Goal, run.Plan.Tasks[i].AssigneeName))
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // agentTarget returns the route target and the system prompt of the main
@@ -349,49 +407,6 @@ func (p *Page) Blocker() string {
 		return fmt.Sprintf("会话已满 %d 条消息，请新建会话后继续", MaxMessages)
 	}
 	return ""
-}
-
-// taskModeBlocker explains why task mode cannot start a plan, or returns "".
-func (p *Page) taskModeBlocker() string {
-	switch p.snapshot().State {
-	case gateway.StateNotConfigured, gateway.StateOffline:
-		return "网关不可用，无法派发任务"
-	}
-	if len(p.chatTargets()) == 0 {
-		return "模型未配置，无法派发任务"
-	}
-	if p.Dispatcher == nil || len(p.Dispatcher.AvailableAgents()) == 0 {
-		return "先创建并启用子 Agent"
-	}
-	return ""
-}
-
-// dispatchBlocker adds the pending plan rule to taskModeBlocker.
-func (p *Page) dispatchBlocker() string {
-	if b := p.taskModeBlocker(); b != "" {
-		return b
-	}
-	if p.Dispatcher.Busy() {
-		return "正在派发任务，请先等待结束"
-	}
-	if p.CurrentID != "" {
-		if _, ok := p.Dispatcher.PendingGroup(p.CurrentID); ok {
-			return "已有待确认的任务计划，请先执行或放弃"
-		}
-	}
-	return ""
-}
-
-// ToggleTaskMode flips task mode and redraws.
-func (p *Page) ToggleTaskMode() {
-	if p.Dispatcher != nil && p.Dispatcher.Busy() {
-		return
-	}
-	if !p.TaskMode && p.taskModeBlocker() != "" {
-		return
-	}
-	p.TaskMode = !p.TaskMode
-	p.repaint()
 }
 
 // syncTarget keeps the pinned route target aligned with the model picker.
@@ -623,9 +638,6 @@ func (p *Page) composer(c *mygoui.Context, t *mygoui.Theme) {
 		labels = append(labels, target.Label())
 	}
 	hint := p.Blocker()
-	if hint == "" && p.TaskMode {
-		hint = p.dispatchBlocker()
-	}
 	if hint == "" {
 		hint = p.ActionError
 	}
@@ -640,7 +652,7 @@ func (p *Page) composer(c *mygoui.Context, t *mygoui.Theme) {
 		Model:       &p.ModelChoice,
 		Hint:        hint,
 		Busy:        p.Runner.Busy(),
-		Disabled:    blocker != "" || p.Runner.Blocked() || (p.TaskMode && p.dispatchBlocker() != ""),
+		Disabled:    blocker != "" || p.Runner.Blocked(),
 		OnSend:      p.Send,
 		OnStop:      func() { p.Runner.Stop() },
 		OnSubmit: func(text string) bool {
@@ -648,9 +660,6 @@ func (p *Page) composer(c *mygoui.Context, t *mygoui.Theme) {
 			p.Send()
 			return true
 		},
-		TaskMode:         p.TaskMode,
-		TaskModeDisabled: p.taskModeBlocker() != "" || (p.Dispatcher != nil && p.Dispatcher.Busy()),
-		OnToggleTaskMode: p.ToggleTaskMode,
 	})
 }
 
